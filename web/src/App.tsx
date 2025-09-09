@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Route, Routes, Link, useNavigate } from 'react-router-dom';
-import { useSession, useUser, Descope } from '@descope/react-sdk';
+import { useSession, useUser, useDescope, Descope } from '@descope/react-sdk';
 
 const DESCOPE_ENABLED = String((import.meta as any).env.VITE_DESCOPE_ENABLED ?? 'false') === 'true' && Boolean((import.meta as any).env.VITE_DESCOPE_PROJECT_ID);
 
@@ -92,7 +92,8 @@ function OwnerDashboard() {
 }
 
 function RequestMeeting() {
-  const { isAuthenticated } = useAppSession();
+  const { isAuthenticated, user } = useAppSession();
+  const { logout } = useDescope();
   const [initialMessage, setInitialMessage] = useState('');
   const [jobId, setJobId] = useState<string | null>(null);
   const [log, setLog] = useState<string[]>([]);
@@ -245,7 +246,11 @@ function RequestMeeting() {
     <div>
       <h2>Chat</h2>
       <div style={{ marginBottom: 8 }}>
-        <label><input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} /> Debug: show all agents</label>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <span>Signed in as {user?.email || 'mock-user@example.com'}</span>
+          {DESCOPE_ENABLED && <button onClick={() => logout()}>Sign out</button>}
+          <label><input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} /> Debug: show all agents</label>
+        </div>
       </div>
       <div style={{ display: 'flex', gap: 16, marginTop: 16 }}>
         <div style={{ flex: 1, minWidth: 300 }}>
