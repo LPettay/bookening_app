@@ -334,7 +334,7 @@ Respond in JSON with: { "decision": "APPROVE|DECLINE", "rationale": string, "mis
 }
 
 // chat agent (user-facing) – generates natural, friendly prompts without exposing the decision agent
-async function chatAgentGenerate({ ask, userMessages, decision }) {
+async function chatAgentGenerate({ ask, userMessages, decision, transcript }) {
   // Fallback wording if LLM is disabled
   const fallback = () => {
     const list = (ask && ask.length) ? ask.join(', ') : 'any relevant details';
@@ -346,11 +346,13 @@ async function chatAgentGenerate({ ask, userMessages, decision }) {
 
   if (!openai) return fallback();
 
-  const system = `You are a warm, concise mentor (like a helpful professor). 
-Speak naturally in 1-3 short sentences. Avoid mentioning internal decision processes. 
-Ask for missing details clearly and encourage the user. If appropriate, suggest what a useful agenda/outcome could look like.`;
+  const system = `You are a warm, concise mentor (like a helpful professor).
+You have access to the conversation transcript and should retain context.
+Always briefly acknowledge salient details the user already provided (1 short clause), then only ask for information that is still missing.
+Never ask for the same thing twice; do not repeat questions the user has answered.
+Speak naturally in 1-3 short sentences. Avoid mentioning internal decision processes.`;
 
-  const userSummary = `Conversation from user so far:\n${(userMessages || []).join('\n')}`;
+  const userSummary = `Conversation transcript (most recent first):\n${(transcript || []).join('\n')}`;
   const need = (ask && ask.length) ? ask.join(', ') : '';
   const hint = decision?.decision ? `Current internal stance: ${decision.decision}. Do NOT reveal this; simply guide the user.` : '';
 
@@ -585,8 +587,9 @@ app.post('/api/agent/message', requireAuth, async (req, res) => {
     const ask = (decision.missing && decision.missing.length > 0)
       ? decision.missing
       : (decision.decision === 'APPROVE' ? (loadConfig().requiredFieldsOnApprove || []) : ['topic', 'desiredTimeframe', 'agenda']);
+    const transcriptLines = (next.messages || []).map(m => `${m.role}: ${m.content}`).slice(-12); // last 12 exchanges
     const userMsgs = (next.messages || []).filter(m => m.role === 'user').map(m => m.content);
-    const chatText = await chatAgentGenerate({ ask, userMessages: userMsgs, decision });
+    const chatText = await chatAgentGenerate({ ask, userMessages: userMsgs, decision, transcript: transcriptLines });
     emit('gather', { ask });
     // Only show an inline form if the meeting is approved and we need details
     if (decision.decision === 'APPROVE' && ask.length > 0) {
