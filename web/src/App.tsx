@@ -402,10 +402,6 @@ export default function App() {
   const isOwner = roles.includes('owner');
   return (
     <BrowserRouter>
-      <nav style={{ display: 'flex', gap: 12 }}>
-        <Link to="/">Chat</Link>
-        {isOwner && <Link to="/owner">Owner</Link>}
-      </nav>
       <Routes>
         <Route path="/" element={<RequestMeeting />} />
         <Route path="/request" element={<RequestMeeting />} />

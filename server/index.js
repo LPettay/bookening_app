@@ -385,10 +385,12 @@ app.post('/api/agent/message', requireAuth, async (req, res) => {
     const userMsgs = (next.messages || []).filter(m => m.role === 'user').map(m => m.content);
     const chatText = await chatAgentGenerate({ ask, userMessages: userMsgs, decision });
     emit('gather', { ask });
-    // also emit a form schema to allow inline entry in UI
-    const formSchema = buildFormSchema(ask);
-    const streamForm = streams.get(jobId);
-    if (streamForm) sseSend(streamForm, 'form', { schema: formSchema });
+    // Only show an inline form if the meeting is approved and we need details
+    if (decision.decision === 'APPROVE' && ask.length > 0) {
+      const formSchema = buildFormSchema(ask);
+      const streamForm = streams.get(jobId);
+      if (streamForm) sseSend(streamForm, 'form', { schema: formSchema });
+    }
     appendMessage(jobId, { role: 'assistant', agent: 'chat', content: chatText });
     emit('chat', { role: 'assistant', agent: 'chat', content: chatText });
     if (decision.decision === 'APPROVE' && ask.length === 0) {
