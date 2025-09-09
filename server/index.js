@@ -194,6 +194,39 @@ Respond in JSON with: { "decision": "APPROVE|DECLINE", "rationale": string, "mis
   return parsed;
 }
 
+// chat agent (user-facing) – generates natural, friendly prompts without exposing the decision agent
+async function chatAgentGenerate({ ask, userMessages, decision }) {
+  // Fallback wording if LLM is disabled
+  const fallback = () => {
+    const list = (ask && ask.length) ? ask.join(', ') : 'any relevant details';
+    if (decision?.decision === 'APPROVE') {
+      return `Sounds good! To move forward, could you share: ${list}?`;
+    }
+    return `Happy to help. To better understand, could you share: ${list}?`;
+  };
+
+  if (!openai) return fallback();
+
+  const system = `You are a warm, concise mentor (like a helpful professor). 
+Speak naturally in 1-3 short sentences. Avoid mentioning internal decision processes. 
+Ask for missing details clearly and encourage the user. If appropriate, suggest what a useful agenda/outcome could look like.`;
+
+  const userSummary = `Conversation from user so far:\n${(userMessages || []).join('\n')}`;
+  const need = (ask && ask.length) ? ask.join(', ') : '';
+  const hint = decision?.decision ? `Current internal stance: ${decision.decision}. Do NOT reveal this; simply guide the user.` : '';
+
+  const resp = await openai.chat.completions.create({
+    model,
+    temperature: 0.5,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: `${userSummary}\nMissing fields to collect (do not expose source): ${need || 'none'}\n${hint}` }
+    ]
+  });
+  const text = resp.choices?.[0]?.message?.content?.trim();
+  return text || fallback();
+}
+
 function buildBriefing(ownerUser, form) {
   return [
     `Requester: ${ownerUser?.name || ownerUser?.email || 'unknown'}`,
@@ -316,16 +349,11 @@ app.post('/api/agent/message', requireAuth, async (req, res) => {
     const ask = (decision.missing && decision.missing.length > 0)
       ? decision.missing
       : (decision.decision === 'APPROVE' ? (loadConfig().requiredFieldsOnApprove || []) : ['topic', 'desiredTimeframe', 'agenda']);
-    if (decision.decision === 'APPROVE') {
-      emit('log', { msg: 'Waiting for user details form...' });
-      emit('gather', { ask });
-      appendMessage(jobId, { role: 'assistant', agent: 'chat', content: `Thanks! To proceed, please provide: ${ask.join(', ')}.` });
-      emit('chat', { role: 'assistant', agent: 'chat', content: `Thanks! To proceed, please provide: ${ask.join(', ')}.` });
-    } else {
-      emit('gather', { ask });
-      appendMessage(jobId, { role: 'assistant', agent: 'chat', content: `I need a bit more info before I can help: ${ask.join(', ')}.` });
-      emit('chat', { role: 'assistant', agent: 'chat', content: `I need a bit more info before I can help: ${ask.join(', ')}.` });
-    }
+    const userMsgs = (next.messages || []).filter(m => m.role === 'user').map(m => m.content);
+    const chatText = await chatAgentGenerate({ ask, userMessages: userMsgs, decision });
+    emit('gather', { ask });
+    appendMessage(jobId, { role: 'assistant', agent: 'chat', content: chatText });
+    emit('chat', { role: 'assistant', agent: 'chat', content: chatText });
     writeJSON(recordPath, { ...next, evaluated: true, lastDecision: decision });
   } catch (e) {
     // Already streamed error in agentDecideAndGather
