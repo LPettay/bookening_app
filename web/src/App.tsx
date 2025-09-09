@@ -411,15 +411,17 @@ function Home() {
 }
 
 export default function App() {
+  const session = useBackendSession();
+  const roles = session?.roles || [];
+  const isOwner = roles.includes('owner');
   return (
     <BrowserRouter>
       <nav style={{ display: 'flex', gap: 12 }}>
-        <Link to="/">Home</Link>
-        <Link to="/request">Request</Link>
-        <Link to="/owner">Owner</Link>
+        <Link to="/">Chat</Link>
+        {isOwner && <Link to="/owner">Owner</Link>}
       </nav>
       <Routes>
-        <Route path="/" element={<Home />} />
+        <Route path="/" element={<RequestMeeting />} />
         <Route path="/request" element={<RequestMeeting />} />
         <Route path="/owner" element={<OwnerDashboard />} />
       </Routes>
