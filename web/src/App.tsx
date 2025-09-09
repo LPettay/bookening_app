@@ -243,34 +243,25 @@ function RequestMeeting() {
   }
 
   return (
-    <div>
+    <div className="page">
       <h2>Chat</h2>
-      <div style={{ marginBottom: 8 }}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <span>Signed in as {user?.email || 'mock-user@example.com'}</span>
+      <div className="card" style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
+        <div className="subtitle">Signed in as {user?.email || 'mock-user@example.com'}</div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           {DESCOPE_ENABLED && <button onClick={() => logout()}>Sign out</button>}
-          <label><input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} /> Debug: show all agents</label>
+          <label className="subtitle"><input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} /> Debug</label>
         </div>
       </div>
-      <div style={{ display: 'flex', gap: 16, marginTop: 16 }}>
-        <div style={{ flex: 1, minWidth: 300 }}>
+      <div className="grid-2" style={{ marginTop: 16 }}>
+        <div className="card">
           <h3>Conversation</h3>
-          <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: 8, height: 300, overflowY: 'auto', background: '#fff' }}>
+          <div className="chat-list">
             {(debug ? messages : messages.filter(m => m.agent !== 'decision')).map((m, i) => {
               if (m.kind === 'form' && m.schema) {
                 const schema = m.schema as any;
                 return (
-                  <div key={i} style={{ marginBottom: 8, display: 'flex' }}>
-                    <div style={{
-                      marginLeft: 0,
-                      maxWidth: '90%',
-                      background: '#f8fafc',
-                      border: '1px solid #e5e7eb',
-                      borderRadius: 6,
-                      padding: '8px 10px',
-                      width: '100%'
-                    }}>
-                      <div style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>assistant · form</div>
+                  <div key={i} className="bubble assistant">
+                      <div className="subtitle">assistant · form</div>
                       <div style={{ fontWeight: 600, marginBottom: 6 }}>{schema.title || 'Details'}</div>
                       <FormFields schema={schema} disabled={formSubmitting} onSubmit={async (values) => {
                         if (!jobId) return;
@@ -286,23 +277,13 @@ function RequestMeeting() {
                           setFormSubmitting(false);
                         }
                       }} />
-                    </div>
                   </div>
                 );
               }
               return (
-                <div key={i} style={{ marginBottom: 8, display: 'flex' }}>
-                  <div style={{
-                    marginLeft: m.role === 'assistant' ? 0 : 'auto',
-                    maxWidth: '80%',
-                    background: m.role === 'assistant' ? '#f1f5f9' : '#dbeafe',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: 6,
-                    padding: '6px 8px'
-                  }}>
-                    <div style={{ fontSize: 12, color: '#475569', marginBottom: 2 }}>{m.role}{debug && m.agent ? ` · ${m.agent}` : ''}</div>
-                    <div>{m.content}</div>
-                  </div>
+                <div key={i} className={`bubble ${m.role}`}>
+                  <div className="subtitle">{m.role}{debug && m.agent ? ` · ${m.agent}` : ''}</div>
+                  <div>{m.content}</div>
                 </div>
               );
             })}
@@ -321,7 +302,7 @@ function RequestMeeting() {
           </div>
         </div>
 
-        <div style={{ flex: 1, minWidth: 300 }}>
+        <div className="card">
           {decision && (
             <div style={{ marginBottom: 16 }}>
               <strong>Decision:</strong> {decision.decision} — {decision.rationale}
@@ -357,7 +338,7 @@ function RequestMeeting() {
           <div style={{ marginTop: 16 }}>
             <h3>Activity</h3>
             <ul>{log.map((l, i) => <li key={i}>{l}</li>)}</ul>
-            <div>Status: {status}</div>
+            <div className="subtitle">Status: {status}</div>
           </div>
         </div>
       </div>
@@ -399,7 +380,7 @@ function Home() {
   const { isAuthenticated, user } = useAppSession();
   const navigate = useNavigate();
   return (
-    <div>
+    <div className="page">
       <h2>Calendar Gatekeeper</h2>
       <div style={{ display: 'flex', gap: 12 }}>
         <button onClick={() => navigate('/request')}>Request a Meeting</button>
