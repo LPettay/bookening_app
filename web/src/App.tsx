@@ -108,6 +108,7 @@ function RequestMeeting() {
   const [formSubmitting, setFormSubmitting] = useState(false);
   const esRef = useRef<EventSource | null>(null);
   const chatListRef = useRef<HTMLDivElement | null>(null);
+  const [isTyping, setIsTyping] = useState(false);
 
   const start = async () => {
     setLog([]);
@@ -154,6 +155,9 @@ function RequestMeeting() {
             if (last && last.role === m.role && last.content === m.content && last.agent === (m.agent || (m.role === 'user' ? 'user' : 'chat'))) return x;
             return [ ...x, { role: m.role, content: m.content, agent: m.agent || (m.role === 'user' ? 'user' : 'chat') } ];
           });
+          if (m.role === 'assistant' && (m.agent || 'chat') !== 'decision') {
+            setIsTyping(false);
+          }
         }
       } catch { /* ignore */ }
     });
@@ -168,12 +172,14 @@ function RequestMeeting() {
       try {
         const { schema } = JSON.parse(e.data);
         setMessages((x) => [ ...x, { role: 'assistant', kind: 'form', schema } ]);
+        setIsTyping(false);
       } catch { /* ignore */ }
     });
     es.addEventListener('scheduled', () => setStatus('scheduled'));
     es.addEventListener('done', (e: any) => {
       try { setStatus(JSON.parse(e.data).status); } catch { setStatus('done'); }
       es.close();
+      setIsTyping(false);
     });
     es.addEventListener('error', (e: any) => {
       try {
@@ -187,6 +193,7 @@ function RequestMeeting() {
       setLog((x) => [ ...x, 'Stream closed' ]);
       try { es.close(); } catch {}
       esRef.current = null;
+      setIsTyping(false);
     };
   };
 
@@ -207,7 +214,7 @@ function RequestMeeting() {
     const el = chatListRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  }, [messages, isTyping]);
 
   const complete = async () => {
     if (!jobId) return;
@@ -235,6 +242,7 @@ function RequestMeeting() {
     if (!jobId || !chatInput.trim()) return;
     const content = chatInput.trim();
     setChatInput('');
+    setIsTyping(true);
     try {
       await fetch('/api/agent/message', {
         method: 'POST',
@@ -244,6 +252,7 @@ function RequestMeeting() {
       });
     } catch {
       setLog((x) => [ ...x, 'Failed to send message' ]);
+      setIsTyping(false);
     }
   };
 
@@ -305,6 +314,12 @@ function RequestMeeting() {
                 </div>
               );
             })}
+            {isTyping && (
+              <div className="bubble assistant">
+                <div className="subtitle">assistant</div>
+                <div className="typing"><span className="dot" /><span className="dot" /><span className="dot" /></div>
+              </div>
+            )}
             {messages.length === 0 && <div style={{ color: '#64748b' }}>No messages yet.</div>}
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
