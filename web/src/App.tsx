@@ -98,8 +98,9 @@ function RequestMeeting() {
   const [form, setForm] = useState<any>({ topic: '', attendees: '', urgency: 'medium', desiredTimeframe: '', background: '', links: '' });
   const [briefing, setBriefing] = useState<string>('');
   const [status, setStatus] = useState<string>('idle');
-  const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
+  const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; agent?: 'user'|'chat'|'decision' }>>([]);
   const [chatInput, setChatInput] = useState('');
+  const [debug, setDebug] = useState(false);
 
   const start = async () => {
     setLog([]);
@@ -144,10 +145,17 @@ function RequestMeeting() {
         if (m?.role && m?.content) {
           setMessages((x) => {
             const last = x[x.length - 1];
-            if (last && last.role === m.role && last.content === m.content) return x;
-            return [ ...x, { role: m.role, content: m.content } ];
+            if (last && last.role === m.role && last.content === m.content && last.agent === (m.agent || (m.role === 'user' ? 'user' : 'chat'))) return x;
+            return [ ...x, { role: m.role, content: m.content, agent: m.agent || (m.role === 'user' ? 'user' : 'chat') } ];
           });
         }
+      } catch { /* ignore */ }
+    });
+    es.addEventListener('agent', (e: any) => {
+      try {
+        const { decision } = JSON.parse(e.data);
+        const content = `[decision] ${decision.decision}: ${decision.rationale || ''}`;
+        setMessages((x) => [ ...x, { role: 'assistant', content, agent: 'decision' } ]);
       } catch { /* ignore */ }
     });
     es.addEventListener('scheduled', () => setStatus('scheduled'));
@@ -230,11 +238,14 @@ function RequestMeeting() {
   return (
     <div>
       <h2>Chat</h2>
+      <div style={{ marginBottom: 8 }}>
+        <label><input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} /> Debug: show all agents</label>
+      </div>
       <div style={{ display: 'flex', gap: 16, marginTop: 16 }}>
         <div style={{ flex: 1, minWidth: 300 }}>
           <h3>Conversation</h3>
           <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: 8, height: 300, overflowY: 'auto', background: '#fff' }}>
-            {messages.map((m, i) => (
+            {(debug ? messages : messages.filter(m => m.agent !== 'decision')).map((m, i) => (
               <div key={i} style={{ marginBottom: 8, display: 'flex' }}>
                 <div style={{
                   marginLeft: m.role === 'assistant' ? 0 : 'auto',
@@ -244,7 +255,7 @@ function RequestMeeting() {
                   borderRadius: 6,
                   padding: '6px 8px'
                 }}>
-                  <div style={{ fontSize: 12, color: '#475569', marginBottom: 2 }}>{m.role}</div>
+                  <div style={{ fontSize: 12, color: '#475569', marginBottom: 2 }}>{m.role}{debug && m.agent ? ` · ${m.agent}` : ''}</div>
                   <div>{m.content}</div>
                 </div>
               </div>

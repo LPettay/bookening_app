@@ -38,6 +38,15 @@ function writeJSON(p, data) {
   fs.writeFileSync(p, JSON.stringify(data, null, 2));
 }
 
+// transcript helpers
+function appendMessage(jobId, msg) {
+  const recordPath = path.join(REQUESTS_DIR, `${jobId}.json`);
+  const rec = readJSON(recordPath, { messages: [] });
+  const next = { ...rec, messages: [ ...(rec.messages || []), { at: Date.now(), ...msg } ] };
+  writeJSON(recordPath, next);
+  return next;
+}
+
 // descope auth helpers (feature-toggle)
 let descope = null;
 if (DESCOPE_ENABLED) {
@@ -285,10 +294,9 @@ app.post('/api/agent/message', requireAuth, async (req, res) => {
   const recordPath = path.join(REQUESTS_DIR, `${jobId}.json`);
   const rec = readJSON(recordPath, null);
   if (!rec) return res.status(404).json({ error: 'Unknown jobId' });
-  const next = { ...rec, messages: [ ...(rec.messages || []), { role: 'user', content, at: Date.now() } ] };
-  writeJSON(recordPath, next);
+  const next = appendMessage(jobId, { role: 'user', agent: 'user', content });
   const stream = streams.get(jobId);
-  if (stream) sseSend(stream, 'chat', { role: 'user', content });
+  if (stream) sseSend(stream, 'chat', { role: 'user', agent: 'user', content });
 
   // Trigger first evaluation (or re-evaluation) when we have user content
   try {
@@ -301,16 +309,22 @@ app.post('/api/agent/message', requireAuth, async (req, res) => {
       { initialMessage: combined, userContext: { email: req.user?.email } },
       emit
     );
+    // store decision agent message and stream on 'agent'
+    appendMessage(jobId, { role: 'assistant', agent: 'decision', content: JSON.stringify(decision) });
+    if (stream) sseSend(stream, 'agent', { role: 'assistant', agent: 'decision', decision });
+
     const ask = (decision.missing && decision.missing.length > 0)
       ? decision.missing
       : (decision.decision === 'APPROVE' ? (loadConfig().requiredFieldsOnApprove || []) : ['topic', 'desiredTimeframe', 'agenda']);
     if (decision.decision === 'APPROVE') {
       emit('log', { msg: 'Waiting for user details form...' });
       emit('gather', { ask });
-      emit('chat', { role: 'assistant', content: `Thanks! To proceed, please provide: ${ask.join(', ')}.` });
+      appendMessage(jobId, { role: 'assistant', agent: 'chat', content: `Thanks! To proceed, please provide: ${ask.join(', ')}.` });
+      emit('chat', { role: 'assistant', agent: 'chat', content: `Thanks! To proceed, please provide: ${ask.join(', ')}.` });
     } else {
       emit('gather', { ask });
-      emit('chat', { role: 'assistant', content: `I need a bit more info before I can help: ${ask.join(', ')}.` });
+      appendMessage(jobId, { role: 'assistant', agent: 'chat', content: `I need a bit more info before I can help: ${ask.join(', ')}.` });
+      emit('chat', { role: 'assistant', agent: 'chat', content: `I need a bit more info before I can help: ${ask.join(', ')}.` });
     }
     writeJSON(recordPath, { ...next, evaluated: true, lastDecision: decision });
   } catch (e) {
@@ -333,7 +347,8 @@ app.post('/api/agent/complete', requireAuth, async (req, res) => {
   const briefing = buildBriefing(req.user, form);
   emit('briefing', { briefing });
   const stream2 = streams.get(jobId);
-  if (stream2) sseSend(stream2, 'chat', { role: 'assistant', content: 'I prepared a briefing draft based on your details. Scheduling now...' });
+  appendMessage(jobId, { role: 'assistant', agent: 'chat', content: 'I prepared a briefing draft based on your details. Scheduling now...' });
+  if (stream2) sseSend(stream2, 'chat', { role: 'assistant', agent: 'chat', content: 'I prepared a briefing draft based on your details. Scheduling now...' });
 
   if (!ensureOwnerGoogle(res)) {
     emit('error', { error: 'Owner Google not connected' });
