@@ -319,13 +319,15 @@ function RequestMeeting() {
 
   if (DESCOPE_ENABLED && !isAuthenticated) {
     return (
-      <div>
-        <h2>Log in</h2>
-        <Descope
-          flowId="sign-up-or-in"
-          theme="light"
-          tenant=""
-        />
+      <div style={{ display: 'grid', placeItems: 'center', minHeight: '80vh' }}>
+        <div className="card" style={{ width: 420, maxWidth: '92vw' }}>
+          <h2 style={{ marginTop: 0 }}>Log in</h2>
+          <Descope
+            flowId="sign-up-or-in"
+            theme="light"
+            tenant=""
+          />
+        </div>
       </div>
     );
   }
