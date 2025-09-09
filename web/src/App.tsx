@@ -126,15 +126,29 @@ function RequestMeeting() {
       try {
         const { ask } = JSON.parse(e.data);
         const list = Array.isArray(ask) ? ask : [String(ask)];
-        setLog((x) => [ ...x, `Please provide: ${list.join(', ')}` ]);
-        setMessages((x) => [ ...x, { role: 'assistant', content: `Please provide: ${list.join(', ')}` } ]);
+        const content = `Please provide: ${list.join(', ')}`;
+        setLog((x) => [ ...x, content ]);
+        setMessages((x) => {
+          const last = x[x.length - 1];
+          if (last && last.role === 'assistant' && last.content === content) return x;
+          return [ ...x, { role: 'assistant', content } ];
+        });
       } catch { /* ignore */ }
     });
     es.addEventListener('briefing', (e: any) => {
       try { setBriefing(JSON.parse(e.data).briefing); } catch { /* ignore */ }
     });
     es.addEventListener('chat', (e: any) => {
-      try { const m = JSON.parse(e.data); if (m?.role && m?.content) setMessages((x) => [ ...x, { role: m.role, content: m.content } ]); } catch { /* ignore */ }
+      try {
+        const m = JSON.parse(e.data);
+        if (m?.role && m?.content) {
+          setMessages((x) => {
+            const last = x[x.length - 1];
+            if (last && last.role === m.role && last.content === m.content) return x;
+            return [ ...x, { role: m.role, content: m.content } ];
+          });
+        }
+      } catch { /* ignore */ }
     });
     es.addEventListener('scheduled', () => setStatus('scheduled'));
     es.addEventListener('done', (e: any) => {
@@ -188,7 +202,6 @@ function RequestMeeting() {
     if (!jobId || !chatInput.trim()) return;
     const content = chatInput.trim();
     setChatInput('');
-    setMessages((x) => [ ...x, { role: 'user', content } ]);
     try {
       await fetch('/api/agent/message', {
         method: 'POST',

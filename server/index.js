@@ -256,9 +256,9 @@ app.post('/api/agent/start', requireAuth, async (req, res) => {
     ownerUserId: req.user?.userId,
     initialMessage: req.body.initialMessage || '',
     createdAt: Date.now(),
-    messages: [
-      { role: 'user', content: req.body.initialMessage || '', at: Date.now() }
-    ]
+    messages: (req.body.initialMessage ? [ { role: 'user', content: req.body.initialMessage, at: Date.now() } ] : []),
+    evaluated: false,
+    lastDecision: null
   });
   res.json({ jobId });
 });
@@ -269,39 +269,13 @@ app.get('/api/agent/stream/:jobId', requireAuth, async (req, res) => {
 
   const emit = (event, data) => sseSend(res, event, data);
 
-  emit('log', { msg: 'Agent starting...' });
-  emit('chat', { role: 'assistant', content: 'Thanks for the details — I\'m evaluating your request now.' });
+  emit('log', { msg: 'Agent ready.' });
   const rec = readJSON(path.join(REQUESTS_DIR, `${jobId}.json`), null);
   if (!rec) {
     emit('error', { error: 'Unknown jobId' });
     return closeStream(jobId);
   }
-
-  try {
-    const decision = await agentDecideAndGather(
-      {
-        initialMessage: rec.initialMessage,
-        userContext: { email: req.user?.email }
-      },
-      emit
-    );
-
-    if (decision.decision === 'APPROVE') {
-      emit('log', { msg: 'Waiting for user details form...' });
-      const ask = (decision.missing && decision.missing.length > 0) ? decision.missing : (loadConfig().requiredFieldsOnApprove || []);
-      emit('gather', { ask });
-      emit('chat', { role: 'assistant', content: `Thanks! To proceed, please provide: ${ask.join(', ')}.` });
-      // keep stream open for details
-    } else {
-      const ask = (decision.missing && decision.missing.length > 0) ? decision.missing : ['topic', 'desiredTimeframe', 'agenda'];
-      emit('gather', { ask });
-      emit('chat', { role: 'assistant', content: `I need a bit more info before I can help: ${ask.join(', ')}.` });
-      // do not close; allow user to send more context via chat
-    }
-  } catch (e) {
-    emit('error', { error: e.message || 'Agent error' });
-    closeStream(jobId);
-  }
+  // Do not evaluate yet; wait for first user message
 });
 
 // append a chat message from the user and echo to stream
@@ -315,6 +289,33 @@ app.post('/api/agent/message', requireAuth, async (req, res) => {
   writeJSON(recordPath, next);
   const stream = streams.get(jobId);
   if (stream) sseSend(stream, 'chat', { role: 'user', content });
+
+  // Trigger first evaluation (or re-evaluation) when we have user content
+  try {
+    const emit = (event, data) => stream && sseSend(stream, event, data);
+    const combined = (next.messages || [])
+      .filter((m) => m.role === 'user')
+      .map((m) => m.content)
+      .join('\n');
+    const decision = await agentDecideAndGather(
+      { initialMessage: combined, userContext: { email: req.user?.email } },
+      emit
+    );
+    const ask = (decision.missing && decision.missing.length > 0)
+      ? decision.missing
+      : (decision.decision === 'APPROVE' ? (loadConfig().requiredFieldsOnApprove || []) : ['topic', 'desiredTimeframe', 'agenda']);
+    if (decision.decision === 'APPROVE') {
+      emit('log', { msg: 'Waiting for user details form...' });
+      emit('gather', { ask });
+      emit('chat', { role: 'assistant', content: `Thanks! To proceed, please provide: ${ask.join(', ')}.` });
+    } else {
+      emit('gather', { ask });
+      emit('chat', { role: 'assistant', content: `I need a bit more info before I can help: ${ask.join(', ')}.` });
+    }
+    writeJSON(recordPath, { ...next, evaluated: true, lastDecision: decision });
+  } catch (e) {
+    // Already streamed error in agentDecideAndGather
+  }
   return res.json({ ok: true });
 });
 
