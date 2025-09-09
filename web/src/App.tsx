@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Route, Routes, Link, useNavigate } from 'react-router-dom';
 import { useSession, useUser, useDescope, Descope } from '@descope/react-sdk';
 
@@ -106,6 +106,7 @@ function RequestMeeting() {
   const [chatInput, setChatInput] = useState('');
   const [debug, setDebug] = useState(false);
   const [formSubmitting, setFormSubmitting] = useState(false);
+  const esRef = useRef<EventSource | null>(null);
 
   const start = async () => {
     setLog([]);
@@ -121,7 +122,10 @@ function RequestMeeting() {
     const j = await r.json();
     setJobId(j.jobId);
 
+    // close any existing stream
+    if (esRef.current) { try { esRef.current.close(); } catch {} esRef.current = null; }
     const es = new EventSource(`/api/agent/stream/${j.jobId}`, { withCredentials: true } as any);
+    esRef.current = es;
     es.addEventListener('log', (e: any) => {
       try { const d = JSON.parse(e.data); setLog((x) => [ ...x, d.msg ]); } catch { /* ignore */ }
     });
@@ -180,15 +184,21 @@ function RequestMeeting() {
     });
     es.onerror = () => {
       setLog((x) => [ ...x, 'Stream closed' ]);
-      es.close();
+      try { es.close(); } catch {}
+      esRef.current = null;
     };
   };
 
   useEffect(() => {
-    if (!jobId) {
+    // auto-start on first mount or after auth becomes available
+    if (!jobId && (!DESCOPE_ENABLED || isAuthenticated)) {
       start();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    return () => { if (esRef.current) { try { esRef.current.close(); } catch {} } };
   }, []);
 
   const complete = async () => {
