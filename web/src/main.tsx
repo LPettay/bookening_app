@@ -10,7 +10,7 @@ const descopeEnabled = String(env.VITE_DESCOPE_ENABLED ?? 'false') === 'true' &&
 const app = (
   <React.StrictMode>
     {descopeEnabled ? (
-      <AuthProvider projectId={projectId}>
+      <AuthProvider projectId={projectId} sessionTokenViaCookie>
         <App />
       </AuthProvider>
     ) : (
