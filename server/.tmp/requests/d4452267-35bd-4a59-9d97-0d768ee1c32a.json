@@ -1,0 +1,38 @@
+{
+  "jobId": "d4452267-35bd-4a59-9d97-0d768ee1c32a",
+  "ownerUserId": "mock-user",
+  "initialMessage": "",
+  "createdAt": 1757386682342,
+  "messages": [
+    {
+      "at": 1757386720466,
+      "role": "user",
+      "agent": "user",
+      "content": "Topic: Finalize Descope social login integration for our Databricks-hosted web app  Due diligence: I’ve read the Descope OAuth/social docs and SDK guides, implemented the sign-in flow, and tested against staging. I’ve also searched the Databricks workspace app docs. I’m stuck on redirect URI handling inside the workspace iframe and token exchange behavior.  Agenda: 1) Validate my current approach and redirect URIs 2) Troubleshoot token/session handling in the workspace context 3) Confirm roles/tenants mapping and next steps to production  Desired outcome: A clear, production-ready plan and fixes for the redirect/token issues.  Urgency: medium Desired timeframe: Tue–Thu this week between 1–4pm PT (30 minutes)  Attendees: requester@example.com, csm@example.com Background: React SPA + Node backend using @descope/node-sdk; deployed in a Databricks workspace app; current error indicates invalid redirect / session not persisted. Links: https://docs.descope.com/oauth, https://github.com/myorg/myrepo/pull/123 (current implementation), https://example.com/error-screenshot"
+    },
+    {
+      "at": 1757386812529,
+      "role": "assistant",
+      "agent": "chat",
+      "content": "Thanks! I have what I need. Scheduling now..."
+    }
+  ],
+  "evaluated": true,
+  "lastDecision": {
+    "decision": "APPROVE",
+    "rationale": "The request includes a clear agenda, desired outcome, and sufficient background context. The user has conducted due diligence by reviewing relevant documentation and testing the implementation. The urgency and timeframe are also clearly defined.",
+    "missing": []
+  },
+  "state": "error",
+  "form": {
+    "topic": "test",
+    "attendees": [
+      "lancepettay@gmail.com"
+    ],
+    "urgency": "medium",
+    "desiredTimeframe": "30mins",
+    "background": "test",
+    "links": []
+  },
+  "updatedAt": 1757386812530
+}

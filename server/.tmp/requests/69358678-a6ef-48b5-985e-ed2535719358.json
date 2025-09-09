@@ -1,0 +1,27 @@
+{
+  "jobId": "69358678-a6ef-48b5-985e-ed2535719358",
+  "ownerUserId": "mock-user",
+  "initialMessage": "",
+  "createdAt": 1757379142499,
+  "messages": [
+    {
+      "at": 1757379145710,
+      "role": "user",
+      "agent": "user",
+      "content": "Test"
+    }
+  ],
+  "evaluated": true,
+  "lastDecision": {
+    "decision": "DECLINE",
+    "rationale": "Insufficient information provided. There is no clear agenda, desired outcome, or urgency specified for the meeting request.",
+    "missing": [
+      "clear agenda",
+      "desired outcome",
+      "urgency (low/med/high)",
+      "desiredTimeframe",
+      "background context",
+      "links"
+    ]
+  }
+}

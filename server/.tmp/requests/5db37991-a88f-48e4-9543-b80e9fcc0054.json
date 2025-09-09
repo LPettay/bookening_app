@@ -1,0 +1,27 @@
+{
+  "jobId": "5db37991-a88f-48e4-9543-b80e9fcc0054",
+  "ownerUserId": "mock-user",
+  "initialMessage": "",
+  "createdAt": 1757384626328,
+  "messages": [
+    {
+      "at": 1757384629492,
+      "role": "user",
+      "agent": "user",
+      "content": "test"
+    }
+  ],
+  "evaluated": true,
+  "lastDecision": {
+    "decision": "DECLINE",
+    "rationale": "Insufficient information provided. There is no clear agenda, desired outcome, or urgency level specified. Additionally, the context does not indicate if email/async communication is insufficient.",
+    "missing": [
+      "clear agenda",
+      "desired outcome",
+      "urgency (low/med/high)",
+      "desiredTimeframe",
+      "background context",
+      "links"
+    ]
+  }
+}

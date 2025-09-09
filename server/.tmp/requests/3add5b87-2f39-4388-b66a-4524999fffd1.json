@@ -1,0 +1,13 @@
+{
+  "jobId": "3add5b87-2f39-4388-b66a-4524999fffd1",
+  "ownerUserId": "mock-user",
+  "initialMessage": "",
+  "createdAt": 1757378217428,
+  "messages": [
+    {
+      "role": "user",
+      "content": "",
+      "at": 1757378217428
+    }
+  ]
+}

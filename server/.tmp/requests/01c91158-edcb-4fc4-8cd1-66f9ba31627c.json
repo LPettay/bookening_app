@@ -1,0 +1,45 @@
+{
+  "jobId": "01c91158-edcb-4fc4-8cd1-66f9ba31627c",
+  "initialMessage": "",
+  "createdAt": 1757391860708,
+  "messages": [
+    {
+      "at": 1757391867246,
+      "role": "user",
+      "agent": "user",
+      "content": "test"
+    },
+    {
+      "at": 1757391913752,
+      "role": "user",
+      "agent": "user",
+      "content": "Topic: 30‑min sync to finalize Google Calendar integration plan  Due diligence: I reviewed your docs and examples and tested locally: - Docs: https://example.com/docs/calendar - Tried the sample; auth works but event creation returns 403 due to calendar scope mismatch.  Agenda: 1) Confirm required scopes and service account vs. user auth 2) Map event fields (attendees, reminders) 3) Review rate limits + retries 4) Approve next steps and timeline  Desired outcome: Leave with a confirmed approach and a short checklist to implement.  Why sync (not email): We’re blocked by ambiguity around scopes and ownership; a quick call will unblock implementation.  Attendees: me <me@example.com>, eng lead <eng@example.com> Urgency: medium Desired timeframe: next Tue–Thu Availability: 9:00–12:00 PT any of those days Links: PR draft https://example.com/pr/123, notes https://example.com/notes"
+    },
+    {
+      "at": 1757391961054,
+      "role": "assistant",
+      "agent": "chat",
+      "content": "Thanks! I have what I need. Scheduling now..."
+    }
+  ],
+  "evaluated": true,
+  "lastDecision": {
+    "decision": "APPROVE",
+    "rationale": "The request meets the due diligence checklist criteria with a clear agenda, desired outcome, and justification for a sync over email. The urgency and timeframe are also well-defined.",
+    "missing": []
+  },
+  "state": "error",
+  "form": {
+    "topic": "test",
+    "attendees": [
+      "test"
+    ],
+    "urgency": "high",
+    "desiredTimeframe": "test",
+    "background": "test",
+    "links": [
+      "test"
+    ]
+  },
+  "updatedAt": 1757391961055
+}

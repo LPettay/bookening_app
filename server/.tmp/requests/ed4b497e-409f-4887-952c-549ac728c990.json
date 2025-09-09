@@ -1,0 +1,33 @@
+{
+  "jobId": "ed4b497e-409f-4887-952c-549ac728c990",
+  "ownerUserId": "mock-user",
+  "initialMessage": "",
+  "createdAt": 1757379886656,
+  "messages": [
+    {
+      "at": 1757379913889,
+      "role": "user",
+      "agent": "user",
+      "content": "I would like to meet to discuss the implementation of social login within our web application using descope."
+    },
+    {
+      "at": 1757379972759,
+      "role": "user",
+      "agent": "user",
+      "content": "We are looking to integrate descope into our databricks platform. I have reviewed the descope documentation as well as the SDK but it is not clear to me how to get this integrated. I wanted to meet with our customer success representative to determine next steps"
+    }
+  ],
+  "evaluated": true,
+  "lastDecision": {
+    "decision": "APPROVE",
+    "rationale": "The request to meet is justified due to the unclear integration process of descope into the databricks platform, and the user has already reviewed the documentation. Meeting with the customer success representative is a reasonable next step.",
+    "missing": [
+      "topic",
+      "attendees (emails)",
+      "urgency (low/med/high)",
+      "desiredTimeframe",
+      "background context",
+      "links"
+    ]
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "jobId": "d5737bf1-11a8-4a96-9374-0e2be94fbefa",
+  "ownerUserId": "mock-user",
+  "initialMessage": "",
+  "createdAt": 1757385794077,
+  "messages": [
+    {
+      "at": 1757385858068,
+      "role": "user",
+      "agent": "user",
+      "content": "I need to meet with my customer success representative to assess what is needed to integrate our backend databricks application using descope inbound apps. I have reviewed the documentation and webinars and need extra help"
+    },
+    {
+      "at": 1757385918546,
+      "role": "user",
+      "agent": "user",
+      "content": "The desired outcome is to obtain direction and next steps in proper implementation as well as troubleshooting our first attempt. It is currently not working despite the fact I've followed the docs."
+    },
+    {
+      "at": 1757385956010,
+      "role": "user",
+      "agent": "user",
+      "content": "please invite lancepettay@gmail.com"
+    },
+    {
+      "at": 1757385974808,
+      "role": "user",
+      "agent": "user",
+      "content": "4pm, 30mins"
+    }
+  ],
+  "evaluated": true,
+  "lastDecision": {
+    "decision": "APPROVE",
+    "rationale": "The meeting is necessary to obtain direction and troubleshooting assistance for the integration, which cannot be resolved through documentation alone. The urgency is implied due to the current issues with implementation.",
+    "missing": [
+      "urgency (low/med/high)",
+      "desiredTimeframe"
+    ]
+  },
+  "state": "awaiting_input"
+}

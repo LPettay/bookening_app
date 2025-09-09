@@ -1,0 +1,10 @@
+{
+  "jobId": "60c4984e-4fc5-4507-b3d9-b8728bcd4fd6",
+  "ownerUserId": "mock-user",
+  "initialMessage": "",
+  "createdAt": 1757387509893,
+  "messages": [],
+  "evaluated": false,
+  "lastDecision": null,
+  "state": "awaiting_input"
+}

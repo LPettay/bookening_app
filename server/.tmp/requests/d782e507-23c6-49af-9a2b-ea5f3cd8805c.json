@@ -1,0 +1,13 @@
+{
+  "jobId": "d782e507-23c6-49af-9a2b-ea5f3cd8805c",
+  "ownerUserId": "mock-user",
+  "initialMessage": "How is it going",
+  "createdAt": 1757377543607,
+  "messages": [
+    {
+      "role": "user",
+      "content": "How is it going",
+      "at": 1757377543607
+    }
+  ]
+}

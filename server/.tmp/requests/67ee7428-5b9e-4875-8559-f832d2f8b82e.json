@@ -1,0 +1,45 @@
+{
+  "jobId": "67ee7428-5b9e-4875-8559-f832d2f8b82e",
+  "initialMessage": "",
+  "createdAt": 1757390779568,
+  "messages": [
+    {
+      "at": 1757390782777,
+      "role": "user",
+      "agent": "user",
+      "content": "test"
+    },
+    {
+      "at": 1757390788464,
+      "role": "user",
+      "agent": "user",
+      "content": "test"
+    },
+    {
+      "at": 1757390793462,
+      "role": "user",
+      "agent": "user",
+      "content": "test"
+    },
+    {
+      "at": 1757390804124,
+      "role": "user",
+      "agent": "user",
+      "content": "Im testing some stuff please"
+    }
+  ],
+  "evaluated": true,
+  "lastDecision": {
+    "decision": "DECLINE",
+    "rationale": "The request lacks a clear agenda, desired outcome, and context. Additionally, it is unclear if email or async communication is insufficient.",
+    "missing": [
+      "clear agenda",
+      "desired outcome",
+      "urgency",
+      "desiredTimeframe",
+      "background context",
+      "links"
+    ]
+  },
+  "state": "awaiting_input"
+}

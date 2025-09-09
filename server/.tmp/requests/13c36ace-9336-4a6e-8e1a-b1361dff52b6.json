@@ -1,0 +1,26 @@
+{
+  "jobId": "13c36ace-9336-4a6e-8e1a-b1361dff52b6",
+  "initialMessage": "",
+  "createdAt": 1757389839445,
+  "messages": [
+    {
+      "at": 1757389842977,
+      "role": "user",
+      "agent": "user",
+      "content": "test"
+    }
+  ],
+  "evaluated": true,
+  "lastDecision": {
+    "decision": "DECLINE",
+    "rationale": "Insufficient information provided. Please clarify the topic, attendees, urgency, desired timeframe, and background context.",
+    "missing": [
+      "topic",
+      "attendees (emails)",
+      "urgency (low/med/high)",
+      "desiredTimeframe",
+      "background context"
+    ]
+  },
+  "state": "awaiting_input"
+}

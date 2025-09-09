@@ -1,0 +1,26 @@
+{
+  "jobId": "9af736bc-70a9-45ac-99b5-e6b86a5b78dc",
+  "ownerUserId": "mock-user",
+  "initialMessage": "",
+  "createdAt": 1757379493783,
+  "messages": [
+    {
+      "at": 1757379502263,
+      "role": "user",
+      "agent": "user",
+      "content": "Hey can you help me"
+    }
+  ],
+  "evaluated": true,
+  "lastDecision": {
+    "decision": "DECLINE",
+    "rationale": "Insufficient information provided. Please clarify the topic, attendees, urgency, desired timeframe, and background context.",
+    "missing": [
+      "topic",
+      "attendees (emails)",
+      "urgency (low/med/high)",
+      "desiredTimeframe",
+      "background context"
+    ]
+  }
+}

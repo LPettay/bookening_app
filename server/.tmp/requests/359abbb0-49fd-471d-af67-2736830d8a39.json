@@ -1,0 +1,9 @@
+{
+  "jobId": "359abbb0-49fd-471d-af67-2736830d8a39",
+  "initialMessage": "",
+  "createdAt": 1757394772609,
+  "messages": [],
+  "evaluated": false,
+  "lastDecision": null,
+  "state": "awaiting_input"
+}

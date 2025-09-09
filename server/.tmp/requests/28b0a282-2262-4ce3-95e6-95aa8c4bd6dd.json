@@ -1,0 +1,73 @@
+{
+  "jobId": "28b0a282-2262-4ce3-95e6-95aa8c4bd6dd",
+  "ownerUserId": "mock-user",
+  "initialMessage": "",
+  "createdAt": 1757379531584,
+  "messages": [
+    {
+      "at": 1757379537050,
+      "role": "user",
+      "agent": "user",
+      "content": "Hey can I get help?"
+    },
+    {
+      "at": 1757379596703,
+      "role": "user",
+      "agent": "user",
+      "content": "I need help with my math homework!!! THIS IS REALLY URGENT"
+    },
+    {
+      "at": 1757379634456,
+      "role": "user",
+      "agent": "user",
+      "content": "I DONT KNOW HOW TO MULTIPLY!! I SAID IT S UEGENT"
+    },
+    {
+      "at": 1757379660121,
+      "role": "user",
+      "agent": "user",
+      "content": "MY HOMEWORK IS DUE TOMORROW< IT IS PROBLEM #7"
+    },
+    {
+      "at": 1757379694743,
+      "role": "user",
+      "agent": "user",
+      "content": "Problem 7 is 12 * 9"
+    },
+    {
+      "at": 1757379749352,
+      "role": "user",
+      "agent": "user",
+      "content": "I dont remember the method the professor showed us in class to multiple"
+    },
+    {
+      "at": 1757379792226,
+      "role": "user",
+      "agent": "user",
+      "content": "I dont remember :("
+    },
+    {
+      "at": 1757379817368,
+      "role": "user",
+      "agent": "user",
+      "content": "I want to talk with the professor because he taught a method but I forgot it :'("
+    },
+    {
+      "at": 1757379845906,
+      "role": "user",
+      "agent": "user",
+      "content": "I am free tomorrow at 4pm"
+    }
+  ],
+  "evaluated": true,
+  "lastDecision": {
+    "decision": "DECLINE",
+    "rationale": "The request lacks a clear agenda and desired outcome beyond immediate help with a specific math problem. Additionally, it does not provide sufficient context about the professor's availability or if the meeting is necessary given the urgency. Please provide more details about the professor's contact information and whether there are specific methods you need to discuss.",
+    "missing": [
+      "professor's email",
+      "specific method or topic to discuss",
+      "urgency level (low/med/high)",
+      "desired timeframe for the meeting"
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "jobId": "0f00d23a-fd25-4979-9c7b-1a03f2139d6d",
+  "ownerUserId": "mock-user",
+  "initialMessage": "",
+  "createdAt": 1757378725057,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello!",
+      "at": 1757378728132
+    }
+  ],
+  "evaluated": true,
+  "lastDecision": {
+    "decision": "DECLINE",
+    "rationale": "Parsing error"
+  }
+}

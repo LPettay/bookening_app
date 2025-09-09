@@ -27,6 +27,8 @@ function useBackendSession() {
 function OwnerDashboard() {
   const session = useBackendSession();
   const [cfg, setCfg] = useState<any>(null);
+  const [showConsent, setShowConsent] = useState(false);
+  const outboundFlowId = (import.meta as any).env.VITE_DESCOPE_OUTBOUND_FLOW_ID as string | undefined;
 
   useEffect(() => {
     fetch('/api/config', { credentials: 'include' })
@@ -44,13 +46,27 @@ function OwnerDashboard() {
     setCfg(await r.json());
   };
   const connectGoogle = async () => {
-    const r = await fetch('/api/calendar/oauth/initiate', { credentials: 'include' });
-    const j = await r.json();
-    window.location.href = j.url;
+    // If Descope Outbound Apps flow is configured, open it as a modal
+    if (DESCOPE_ENABLED && outboundFlowId) {
+      setShowConsent(true);
+      return;
+    }
+    try {
+      const r = await fetch('/api/calendar/oauth/initiate', { credentials: 'include' });
+      let j: any = null;
+      try { j = await r.json(); } catch {}
+      if (!r.ok || !j?.url) {
+        const err = j?.error || `HTTP ${r.status}`;
+        alert(`Failed to initiate Google connect: ${err}`);
+        return;
+      }
+      window.location.href = j.url;
+    } catch (e: any) {
+      alert(`Failed to initiate Google connect: ${e?.message || 'network error'}`);
+    }
   };
 
   if (!session) return <div>Loading...</div>;
-  if (!(session.roles || []).includes('owner')) return <div>Forbidden</div>;
 
   return (
     <div>
@@ -80,6 +96,24 @@ function OwnerDashboard() {
       <hr />
       <h3>Google Calendar</h3>
       <button onClick={connectGoogle}>Connect Google</button>
+      {showConsent && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div className="card" style={{ width: 420, maxWidth: '90vw' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0 }}>Connect Google</h3>
+              <button onClick={() => setShowConsent(false)} style={{ background: 'transparent', border: 0, color: 'var(--text)' }}>✕</button>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <Descope
+                flowId={outboundFlowId || 'sign-up-or-in'}
+                theme="light"
+                onSuccess={() => { setShowConsent(false); alert('Consent completed. If tokens are mapped via Descope Outbound Apps, scheduling will work.'); }}
+                onError={(e: any) => { alert(`Consent error: ${e?.error?.message || 'unknown'}`); }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{ marginTop: 8 }}>
         <button onClick={async () => {
           const r = await fetch('/api/calendar/availability', { credentials: 'include' });
@@ -101,6 +135,7 @@ function RequestMeeting() {
   const [form, setForm] = useState<any>({ topic: '', attendees: '', urgency: 'medium', desiredTimeframe: '', background: '', links: '' });
   const [briefing, setBriefing] = useState<string>('');
   const [status, setStatus] = useState<string>('idle');
+  const [slotSuggestions, setSlotSuggestions] = useState<{ start: string; end: string }[]>([]);
   type ChatMessage = { role: 'user' | 'assistant'; content?: string; agent?: 'user'|'chat'|'decision'; kind?: 'text'|'form'; schema?: any };
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -238,6 +273,28 @@ function RequestMeeting() {
     }
   };
 
+  const fetchSlots = async () => {
+    try {
+      const r = await fetch('/api/calendar/suggest?ownerOnly=true&days=7&durationMins=30', { credentials: 'include' });
+      const j = await r.json();
+      if (Array.isArray(j?.suggestions)) setSlotSuggestions(j.suggestions);
+    } catch {}
+  };
+
+  const bookSlot = async (slot: { start: string; end: string }) => {
+    // Populate a minimal form and reuse existing scheduling pipeline
+    setForm((f: any) => ({
+      topic: f.topic || 'Meeting',
+      attendees: f.attendees,
+      urgency: f.urgency || 'medium',
+      desiredTimeframe: `${new Date(slot.start).toLocaleString()} - ${new Date(slot.end).toLocaleString()}`,
+      background: f.background,
+      links: f.links
+    }));
+    // Tell the assistant we're scheduling now
+    await complete();
+  };
+
   const sendChat = async () => {
     if (!jobId || !chatInput.trim()) return;
     const content = chatInput.trim();
@@ -335,6 +392,17 @@ function RequestMeeting() {
               disabled={!jobId}
             />
             <button onClick={sendChat} disabled={!jobId || !chatInput.trim()}>Send</button>
+          </div>
+          <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button onClick={fetchSlots}>Suggest times</button>
+            {slotSuggestions.length > 0 && <span className="subtitle">Pick a slot:</span>}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {slotSuggestions.map((s, i) => (
+                <button key={i} onClick={() => bookSlot(s)} style={{ background: '#1f2a44' }}>
+                  {new Date(s.start).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 

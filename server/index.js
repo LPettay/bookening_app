@@ -103,14 +103,23 @@ async function requireAuth(req, res, next) {
     req.session = { grant: { roles: MOCK_ROLES } };
     return next();
   }
-  const token = getBearer(req) || req.cookies['DS'] || req.cookies['DSR'];
-  if (!token) return res.status(401).json({ error: 'No session' });
   if (!descope) return res.status(500).json({ error: 'Auth not available' });
   try {
-    const { session } = await descope.validateSession(token);
-    req.user = session?.user;
+    // Prefer cookie-aware request validation (works with DS/DSR cookies)
+    const { session, user } = await descope.validateRequest(req);
+    if (session && user) {
+      req.user = user;
+      req.session = session;
+      return next();
+    }
+  } catch (_) { /* fallthrough to token-based */ }
+  try {
+    const token = getBearer(req) || req.cookies['DS'] || req.cookies['DSR'];
+    if (!token) return res.status(401).json({ error: 'No session' });
+    const { session, user } = await descope.validateSession(token);
+    req.user = user || session?.user;
     req.session = session;
-    next();
+    return next();
   } catch (e) {
     return res.status(401).json({ error: 'Invalid session' });
   }
@@ -118,6 +127,11 @@ async function requireAuth(req, res, next) {
 function requireRole(role) {
   return (req, res, next) => {
     const roles = req.session?.grant?.roles || [];
+    const primaryLogin = Array.isArray(req.user?.loginIds) && req.user.loginIds.length > 0 ? String(req.user.loginIds[0]) : '';
+    const email = (req.user?.email || primaryLogin || '').toLowerCase();
+    const ownerEmails = String(process.env.OWNER_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    // Allow owner access by email override as a convenience
+    if (role === 'owner' && (email === 'lancepettay@gmail.com' || (ownerEmails.length && ownerEmails.includes(email)))) return next();
     if (!roles.includes(role)) return res.status(403).json({ error: 'Forbidden' });
     next();
   };
@@ -335,7 +349,7 @@ app.post('/api/config', requireAuth, requireRole('owner'), (req, res) => {
 });
 
 // google oauth for owner
-app.get('/api/calendar/oauth/initiate', requireAuth, requireRole('owner'), (req, res) => {
+app.get('/api/calendar/oauth/initiate', requireAuth, (req, res) => {
   const o = googleClient();
   const scopes = ['https://www.googleapis.com/auth/calendar'];
   const url = o.generateAuthUrl({ access_type: 'offline', scope: scopes, prompt: 'consent' });
@@ -350,38 +364,44 @@ app.get('/api/calendar/oauth/callback', async (req, res) => {
 });
 
 // availability (optional)
-app.get('/api/calendar/availability', requireAuth, requireRole('owner'), async (req, res) => {
+app.get('/api/calendar/availability', requireAuth, async (req, res) => {
   if (!ensureOwnerGoogle(res)) return;
-  const auth = googleClient();
-  const calendar = google.calendar({ version: 'v3', auth });
-  const now = new Date();
-  const in7 = new Date(Date.now() + 7 * 24 * 3600 * 1000);
-  const events = await calendar.events.list({
-    calendarId: process.env.GOOGLE_CALENDAR_ID || 'primary',
-    timeMin: now.toISOString(),
-    timeMax: in7.toISOString(),
-    singleEvents: true,
-    orderBy: 'startTime'
-  });
-  res.json({ count: events.data.items?.length || 0 });
+  try {
+    const auth = googleClient();
+    const calendar = google.calendar({ version: 'v3', auth });
+    const now = new Date();
+    const in7 = new Date(Date.now() + 7 * 24 * 3600 * 1000);
+    const events = await calendar.events.list({
+      calendarId: process.env.GOOGLE_CALENDAR_ID || 'primary',
+      timeMin: now.toISOString(),
+      timeMax: in7.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime'
+    });
+    res.json({ count: events.data.items?.length || 0 });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'availability_error' });
+  }
 });
 
 // suggest mutual times between owner and requester
 app.get('/api/calendar/suggest', requireAuth, async (req, res) => {
-  // Parameters (optional): days=7, durationMins=30, windowStart=09:00, windowEnd=17:00
+  // Parameters (optional): days=7, durationMins=30, windowStart=09:00, windowEnd=17:00, ownerOnly=false
   const days = Number(req.query.days || 7);
   const durationMins = Number(req.query.durationMins || 30);
   const windowStart = String(req.query.windowStart || '09:00');
   const windowEnd = String(req.query.windowEnd || '17:00');
+  const ownerOnly = String(req.query.ownerOnly || 'false') === 'true';
 
   // Build clients
-  if (!ensureOwnerGoogle(res) && !hasUserGoogle(req.user?.userId)) return; // error already sent for owner case
+  if (!ensureOwnerGoogle(res)) return; // owner must be connected
   const ownerAuth = googleClient();
-  const userAuth = hasUserGoogle(req.user?.userId) ? googleClientForUser(req.user?.userId) : null;
-  if (!userAuth) return res.status(400).json({ error: 'Requester Google not connected' });
+  const userHasTokens = hasUserGoogle(req.user?.userId);
+  const useOwnerOnly = ownerOnly || !userHasTokens;
+  const userAuth = !useOwnerOnly ? googleClientForUser(req.user?.userId) : null;
 
   const calendarOwner = google.calendar({ version: 'v3', auth: ownerAuth });
-  const calendarUser = google.calendar({ version: 'v3', auth: userAuth });
+  const calendarUser = !useOwnerOnly && userAuth ? google.calendar({ version: 'v3', auth: userAuth }) : null;
 
   const now = new Date();
   const until = new Date(Date.now() + days * 24 * 3600 * 1000);
@@ -401,7 +421,7 @@ app.get('/api/calendar/suggest', requireAuth, async (req, res) => {
   };
 
   const ownerEvents = await listEvents(calendarOwner, process.env.GOOGLE_CALENDAR_ID || 'primary');
-  const userEvents = await listEvents(calendarUser, 'primary');
+  const userEvents = calendarUser ? await listEvents(calendarUser, 'primary') : [];
 
   const parseHM = (s) => { const [h, m] = s.split(':').map(Number); return { h: h || 0, m: m || 0 }; };
   const { h: wsH, m: wsM } = parseHM(windowStart);
@@ -416,14 +436,14 @@ app.get('/api/calendar/suggest', requireAuth, async (req, res) => {
     for (let t = dayStart.getTime(); t + slotMs <= dayEnd.getTime(); t += slotMs) {
       const s = new Date(t); const e = new Date(t + slotMs);
       const busyOwner = ownerEvents.some(ev => !(e <= ev.start || s >= ev.end));
-      const busyUser = userEvents.some(ev => !(e <= ev.start || s >= ev.end));
+      const busyUser = useOwnerOnly ? false : userEvents.some(ev => !(e <= ev.start || s >= ev.end));
       if (!busyOwner && !busyUser && s > now) suggestions.push({ start: s.toISOString(), end: e.toISOString() });
       if (suggestions.length >= 10) break;
     }
     if (suggestions.length >= 10) break;
   }
 
-  res.json({ suggestions });
+  res.json({ suggestions, ownerOnly: useOwnerOnly });
 });
 
 // per-user google oauth (local demo storage)

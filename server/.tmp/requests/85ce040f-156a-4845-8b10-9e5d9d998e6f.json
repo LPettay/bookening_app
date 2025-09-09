@@ -1,0 +1,46 @@
+{
+  "jobId": "85ce040f-156a-4845-8b10-9e5d9d998e6f",
+  "ownerUserId": "mock-user",
+  "initialMessage": "",
+  "createdAt": 1757386313648,
+  "messages": [
+    {
+      "at": 1757386356985,
+      "role": "user",
+      "agent": "user",
+      "content": "The desired outcome is to obtain direction and next steps in proper implementation as well as troubleshooting our first attempt. It is currently not working despite the fact I've followed the docs. I need direction on how to proceed, my current implementation is not working despite following the docs"
+    },
+    {
+      "at": 1757386393748,
+      "role": "user",
+      "agent": "user",
+      "content": "The desired outcome is to obtain direction and next steps in proper implementation as well as troubleshooting our first attempt. It is currently not working despite the fact I've followed the docs. I need direction on how to proceed, my current implementation is not working despite following the docs. I need assistance in implementing descope into my backend application (databricks)"
+    },
+    {
+      "at": 1757386450995,
+      "role": "user",
+      "agent": "user",
+      "content": "The auth page is present when signign into my app but it's not redirecting properly when attempting the social login"
+    },
+    {
+      "at": 1757386487991,
+      "role": "user",
+      "agent": "user",
+      "content": "The log bundle is not generating properly, I believe there is a bug in the platform. I want to speak to my customer success representative"
+    }
+  ],
+  "evaluated": true,
+  "lastDecision": {
+    "decision": "APPROVE",
+    "rationale": "The request involves troubleshooting a critical issue with the implementation of Descope in a backend application, which requires direct communication for effective resolution. The urgency of the situation suggests that a meeting is warranted to address the problems encountered.",
+    "missing": [
+      "topic",
+      "attendees (emails)",
+      "urgency (low/med/high)",
+      "desiredTimeframe",
+      "background context",
+      "links"
+    ]
+  },
+  "state": "awaiting_input"
+}

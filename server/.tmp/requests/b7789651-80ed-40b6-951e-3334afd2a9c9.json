@@ -1,0 +1,26 @@
+{
+  "jobId": "b7789651-80ed-40b6-951e-3334afd2a9c9",
+  "initialMessage": "",
+  "createdAt": 1757395627920,
+  "messages": [
+    {
+      "at": 1757395638967,
+      "role": "user",
+      "agent": "user",
+      "content": "test"
+    }
+  ],
+  "evaluated": true,
+  "lastDecision": {
+    "decision": "DECLINE",
+    "rationale": "Insufficient information provided. There is no clear agenda, desired outcome, or context for the meeting request.",
+    "missing": [
+      "topic",
+      "attendees (emails)",
+      "urgency (low/med/high)",
+      "desiredTimeframe",
+      "background context"
+    ]
+  },
+  "state": "awaiting_input"
+}

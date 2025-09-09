@@ -1,0 +1,26 @@
+{
+  "jobId": "864e6d84-e3cb-4ec2-ac75-4c999f328e73",
+  "initialMessage": "",
+  "createdAt": 1757390991708,
+  "messages": [
+    {
+      "at": 1757390995330,
+      "role": "user",
+      "agent": "user",
+      "content": "test"
+    }
+  ],
+  "evaluated": true,
+  "lastDecision": {
+    "decision": "DECLINE",
+    "rationale": "Insufficient information provided. There is no clear agenda, desired outcome, or context for the request.",
+    "missing": [
+      "topic",
+      "attendees (emails)",
+      "urgency (low/med/high)",
+      "desiredTimeframe",
+      "background context"
+    ]
+  },
+  "state": "awaiting_input"
+}

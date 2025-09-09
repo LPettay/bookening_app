@@ -1,0 +1,39 @@
+{
+  "jobId": "ee5345ea-2fc3-4fcc-bd86-c7de4d98da1d",
+  "initialMessage": "",
+  "createdAt": 1757390461744,
+  "messages": [
+    {
+      "at": 1757390465102,
+      "role": "user",
+      "agent": "user",
+      "content": "test"
+    },
+    {
+      "at": 1757390512025,
+      "role": "user",
+      "agent": "user",
+      "content": "I need to implement a playbook in xsoar"
+    },
+    {
+      "at": 1757390530559,
+      "role": "user",
+      "agent": "user",
+      "content": "its going to be. aphishing playbook"
+    }
+  ],
+  "evaluated": true,
+  "lastDecision": {
+    "decision": "DECLINE",
+    "rationale": "Insufficient diligence and unclear value. There is no clear agenda or desired outcome provided for the implementation of the phishing playbook in XSOAR.",
+    "missing": [
+      "clear agenda and desired outcome",
+      "attendees (emails)",
+      "urgency (low/med/high)",
+      "desired timeframe",
+      "background context",
+      "links"
+    ]
+  },
+  "state": "awaiting_input"
+}

@@ -1,0 +1,18 @@
+{
+  "jobId": "e9717e21-7184-496e-be7d-ab2f07d2785b",
+  "ownerUserId": "mock-user",
+  "initialMessage": "Hey how are you!",
+  "createdAt": 1757377797021,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hey how are you!",
+      "at": 1757377797021
+    },
+    {
+      "role": "user",
+      "content": "what is your name?",
+      "at": 1757377850989
+    }
+  ]
+}

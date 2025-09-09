@@ -1,0 +1,31 @@
+{
+  "jobId": "1df1636e-4ccc-4326-aeea-8bac7819b635",
+  "ownerUserId": "mock-user",
+  "initialMessage": "",
+  "createdAt": 1757379338341,
+  "messages": [
+    {
+      "at": 1757379343842,
+      "role": "user",
+      "agent": "user",
+      "content": "whats up?"
+    },
+    {
+      "at": 1757379361395,
+      "role": "user",
+      "agent": "user",
+      "content": "I need help with my math homework"
+    }
+  ],
+  "evaluated": true,
+  "lastDecision": {
+    "decision": "DECLINE",
+    "rationale": "Insufficient diligence and unclear value. The request lacks a clear agenda and desired outcome for the math homework assistance.",
+    "missing": [
+      "clear agenda and desired outcome",
+      "urgency (low/med/high)",
+      "desired timeframe",
+      "background context"
+    ]
+  }
+}
