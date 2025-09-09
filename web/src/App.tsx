@@ -129,11 +129,7 @@ function RequestMeeting() {
         const list = Array.isArray(ask) ? ask : [String(ask)];
         const content = `Please provide: ${list.join(', ')}`;
         setLog((x) => [ ...x, content ]);
-        setMessages((x) => {
-          const last = x[x.length - 1];
-          if (last && last.role === 'assistant' && last.content === content) return x;
-          return [ ...x, { role: 'assistant', content } ];
-        });
+        // Do not add a chat bubble here; the server also emits a matching 'chat' event.
       } catch { /* ignore */ }
     });
     es.addEventListener('briefing', (e: any) => {
