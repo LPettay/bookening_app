@@ -107,6 +107,7 @@ function RequestMeeting() {
   const [debug, setDebug] = useState(false);
   const [formSubmitting, setFormSubmitting] = useState(false);
   const esRef = useRef<EventSource | null>(null);
+  const chatListRef = useRef<HTMLDivElement | null>(null);
 
   const start = async () => {
     setLog([]);
@@ -201,6 +202,13 @@ function RequestMeeting() {
     return () => { if (esRef.current) { try { esRef.current.close(); } catch {} } };
   }, []);
 
+  // Auto-scroll chat to the bottom whenever messages change
+  useEffect(() => {
+    const el = chatListRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages]);
+
   const complete = async () => {
     if (!jobId) return;
     const payload = {
@@ -265,7 +273,7 @@ function RequestMeeting() {
       <div className="grid-2" style={{ marginTop: 16 }}>
         <div className="card">
           <h3>Conversation</h3>
-          <div className="chat-list">
+          <div className="chat-list" ref={chatListRef}>
             {(debug ? messages : messages.filter(m => m.agent !== 'decision')).map((m, i) => {
               if (m.kind === 'form' && m.schema) {
                 const schema = m.schema as any;
