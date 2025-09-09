@@ -205,8 +205,8 @@ function RequestMeeting() {
     });
     es.addEventListener('form', (e: any) => {
       try {
-        const { schema } = JSON.parse(e.data);
-        setMessages((x) => [ ...x, { role: 'assistant', kind: 'form', schema } ]);
+        const { schema, prefill } = JSON.parse(e.data);
+        setMessages((x) => [ ...x, { role: 'assistant', kind: 'form', schema: { ...schema, prefill } } ]);
         setIsTyping(false);
       } catch { /* ignore */ }
     });
@@ -343,7 +343,7 @@ function RequestMeeting() {
           <label className="subtitle"><input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} /> Debug</label>
         </div>
       </div>
-      <div className="grid-2" style={{ marginTop: 16 }}>
+      <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: '1fr', gap: 18 }}>
         <div className="card">
           <h3>Conversation</h3>
           <div className="chat-list" ref={chatListRef}>
@@ -357,25 +357,27 @@ function RequestMeeting() {
                       <FormFields
                         schema={schema}
                         prefill={{
-                          topic: (messages.filter(m => m.role==='user').map(m => m.content).slice(-1)[0] || ''),
-                          background: messages.filter(m => m.role==='user').map(m => m.content).slice(-3).join('\n')
+                          ...(schema.prefill || {}),
+                          topic: (schema.prefill?.title) || (messages.filter(m => m.role==='user').map(m => m.content).slice(-1)[0] || ''),
+                          background: (schema.prefill?.background) || messages.filter(m => m.role==='user').map(m => m.content).slice(-3).join('\n'),
+                          attendees: (schema.prefill?.attendees) || (user?.email || '')
                         }}
                         disabled={formSubmitting}
                         onSubmit={async (values, slot) => {
-                        if (!jobId) return;
-                        setFormSubmitting(true);
-                        try {
-                          await fetch('/api/agent/form/submit', {
-                            method: 'POST',
-                            credentials: 'include',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ jobId, formId: schema.id, values, slot })
-                          });
-                        } finally {
-                          setFormSubmitting(false);
-                        }
-                      }}
-                      />
+                          if (!jobId) return;
+                          setFormSubmitting(true);
+                          try {
+                            await fetch('/api/agent/form/submit', {
+                              method: 'POST',
+                              credentials: 'include',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ jobId, formId: schema.id, values, slot })
+                            });
+                          } finally {
+                            setFormSubmitting(false);
+                          }
+                        }}
+                        />
                   </div>
                 );
               }
@@ -409,59 +411,10 @@ function RequestMeeting() {
         </div>
 
         <div className="card">
-          {decision && (
-            <div style={{ marginBottom: 16 }}>
-              <strong>Decision:</strong> {decision.decision} — {decision.rationale}
-            </div>
-          )}
-
-          {decision?.decision === 'APPROVE' && (
-            <div style={{ marginBottom: 16 }}>
-              <h3>Finalize Details</h3>
-              <input
-                placeholder="Topic"
-                value={form.topic || (messages.filter(m => m.role==='user').map(m => m.content).slice(-1)[0] || '')}
-                onChange={e => setForm({ ...form, topic: e.target.value })}
-              />
-              <textarea
-                rows={3}
-                placeholder="Background"
-                value={form.background || messages.filter(m => m.role==='user').map(m => m.content).slice(-3).join('\n')}
-                onChange={e => setForm({ ...form, background: e.target.value })}
-              />
-              <input placeholder="Attendees (comma-separated emails)"
-                value={form.attendees} onChange={e => setForm({ ...form, attendees: e.target.value })} />
-
-              <div style={{ marginTop: 12 }}>
-                <div className="subtitle">Pick a date, then choose a time</div>
-                <button onClick={fetchSlots}>Load suggested times</button>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                  {slotSuggestions.map((s, i) => (
-                    <button key={i} onClick={() => bookSlot(s)} style={{ background: '#1f2a44' }}>
-                      {new Date(s.start).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div style={{ marginTop: 8 }}>
-                <button onClick={complete}>Submit Details & Schedule</button>
-              </div>
-            </div>
-          )}
-
-          {briefing && (
-            <div style={{ marginTop: 16 }}>
-              <h3>Briefing Preview</h3>
-              <pre style={{ background: '#f3f3f3', padding: 8 }}>{briefing}</pre>
-            </div>
-          )}
-
-          <div style={{ marginTop: 16 }}>
-            <h3>Activity</h3>
-            <ul>{log.map((l, i) => <li key={i}>{l}</li>)}</ul>
-            <div className="subtitle">Status: {status}</div>
-          </div>
+          <h3>Activity</h3>
+          {decision && <div className="subtitle" style={{ marginBottom: 6 }}>Decision: {decision.decision} — {decision.rationale}</div>}
+          <ul>{log.map((l, i) => <li key={i}>{l}</li>)}</ul>
+          <div className="subtitle">Status: {status}</div>
         </div>
       </div>
     </div>
@@ -470,9 +423,10 @@ function RequestMeeting() {
 
 // Inline form renderer
 function FormFields({ schema, onSubmit, disabled, prefill }: { schema: any; onSubmit: (vals: any, slot?: { start: string; end: string }) => void | Promise<void>; disabled?: boolean; prefill?: Record<string, any> }) {
-  const [vals, setVals] = useState<any>({ urgency: 'medium', ...(prefill || {}) });
+  const [vals, setVals] = useState<any>({ ...(prefill || {}) });
   const [slots, setSlots] = useState<{ start: string; end: string }[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<{ start: string; end: string } | undefined>(undefined);
+  const [submitting, setSubmitting] = useState(false);
   const set = (k: string, v: any) => setVals((x: any) => ({ ...x, [k]: v }));
   const fieldEl = (f: any) => {
     const common = { disabled, style: { width: '100%' } } as any;
@@ -525,7 +479,7 @@ function FormFields({ schema, onSubmit, disabled, prefill }: { schema: any; onSu
         </div>
       </div>
       <div style={{ marginTop: 12 }}>
-        <button disabled={disabled} onClick={() => onSubmit(vals, selectedSlot)}>Submit Details & Schedule</button>
+        <button disabled={disabled || submitting} onClick={async () => { setSubmitting(true); try { await onSubmit(vals, selectedSlot); } finally { setSubmitting(false); } }}>Submit Details & Schedule</button>
       </div>
     </div>
   );

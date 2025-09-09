@@ -368,6 +368,24 @@ Speak naturally in 1-3 short sentences. Avoid mentioning internal decision proce
   return text || fallback();
 }
 
+// Generate concise meeting title/background from transcript
+async function summarizeForForm(transcriptLines) {
+  if (!openai) {
+    const last = transcriptLines[transcriptLines.length - 1] || '';
+    return { title: last.slice(0, 60), background: transcriptLines.join('\n').slice(0, 400) };
+  }
+  const sys = `You create concise meeting details from chat transcripts.
+Return strictly in JSON: {"title": string, "background": string}.
+Title: <= 8 words, specific, no punctuation at end. Background: 1-3 short sentences.`;
+  const user = `Transcript:\n${transcriptLines.join('\n')}`;
+  const r = await openai.chat.completions.create({
+    model,
+    temperature: 0.3,
+    messages: [ { role: 'system', content: sys }, { role: 'user', content: user } ]
+  });
+  try { return JSON.parse(r.choices?.[0]?.message?.content || '{}'); } catch { return { title: '', background: '' }; }
+}
+
 function buildBriefing(ownerUser, form) {
   return [
     `Requester: ${ownerUser?.name || ownerUser?.email || 'unknown'}`,
@@ -588,17 +606,19 @@ app.post('/api/agent/message', requireAuth, async (req, res) => {
       ? decision.missing
       : (decision.decision === 'APPROVE' ? (loadConfig().requiredFieldsOnApprove || []) : ['topic', 'desiredTimeframe', 'agenda']);
     const transcriptLines = (next.messages || []).map(m => `${m.role}: ${m.content}`).slice(-12); // last 12 exchanges
-    const userMsgs = (next.messages || []).filter(m => m.role === 'user').map(m => m.content);
-    const chatText = await chatAgentGenerate({ ask, userMessages: userMsgs, decision, transcript: transcriptLines });
     emit('gather', { ask });
-    // Only show an inline form if the meeting is approved and we need details
+    // If approved and details are needed, show inline form and skip extra assistant follow-up
     if (decision.decision === 'APPROVE' && ask.length > 0) {
       const formSchema = buildFormSchema(ask);
+      const prefill = await summarizeForForm(transcriptLines);
       const streamForm = streams.get(jobId);
-      if (streamForm) sseSend(streamForm, 'form', { schema: formSchema });
+      if (streamForm) sseSend(streamForm, 'form', { schema: formSchema, prefill });
+    } else {
+      const userMsgs = (next.messages || []).filter(m => m.role === 'user').map(m => m.content);
+      const chatText = await chatAgentGenerate({ ask, userMessages: userMsgs, decision, transcript: transcriptLines });
+      appendMessage(jobId, { role: 'assistant', agent: 'chat', content: chatText });
+      emit('chat', { role: 'assistant', agent: 'chat', content: chatText });
     }
-    appendMessage(jobId, { role: 'assistant', agent: 'chat', content: chatText });
-    emit('chat', { role: 'assistant', agent: 'chat', content: chatText });
     if (decision.decision === 'APPROVE' && ask.length === 0) {
       updateState(jobId, 'ready_to_schedule');
     } else if (decision.decision === 'APPROVE') {
@@ -657,6 +677,8 @@ app.post('/api/agent/complete', requireAuth, async (req, res) => {
     emit('scheduled', { eventId: event.data.id, htmlLink: event.data.htmlLink });
     updateState(jobId, 'notified');
     emit('done', { status: 'SCHEDULED' });
+    appendMessage(jobId, { role: 'assistant', agent: 'chat', content: 'Invite sent. You should receive a calendar email shortly.' });
+    if (streams.get(jobId)) sseSend(streams.get(jobId), 'chat', { role: 'assistant', agent: 'chat', content: 'Invite sent. You should receive a calendar email shortly.' });
     res.json({ ok: true, event: event.data });
     closeStream(jobId);
   } catch (e) {
@@ -721,6 +743,8 @@ app.post('/api/agent/form/submit', requireAuth, async (req, res) => {
     emit('scheduled', { eventId: event.data.id, htmlLink: event.data.htmlLink });
     updateState(jobId, 'notified');
     emit('done', { status: 'SCHEDULED' });
+    appendMessage(jobId, { role: 'assistant', agent: 'chat', content: 'Invite sent. You should receive a calendar email shortly.' });
+    if (streams.get(jobId)) sseSend(streams.get(jobId), 'chat', { role: 'assistant', agent: 'chat', content: 'Invite sent. You should receive a calendar email shortly.' });
     return res.json({ ok: true, event: event.data });
   } catch (e) {
     emit('error', { error: e.message || 'Calendar error' });
