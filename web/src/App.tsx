@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Route, Routes, Link, useNavigate } from 'react-router-dom';
-import { useSession, Descope } from '@descope/react-sdk';
+import { useSession, useUser, Descope } from '@descope/react-sdk';
 
 const DESCOPE_ENABLED = String((import.meta as any).env.VITE_DESCOPE_ENABLED ?? 'false') === 'true' && Boolean((import.meta as any).env.VITE_DESCOPE_PROJECT_ID);
 
 function useAppSession(): { isAuthenticated: boolean; user?: any } {
   if (DESCOPE_ENABLED) {
-    return useSession() as unknown as { isAuthenticated: boolean; user?: any };
+    const { isAuthenticated } = useSession();
+    const { user } = useUser();
+    return { isAuthenticated, user } as { isAuthenticated: boolean; user?: any };
   }
   return { isAuthenticated: true, user: { email: 'mock-user@example.com' } };
 }
