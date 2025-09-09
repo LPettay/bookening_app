@@ -47,6 +47,35 @@ function appendMessage(jobId, msg) {
   return next;
 }
 
+// state helpers
+function updateState(jobId, newState) {
+  const recordPath = path.join(REQUESTS_DIR, `${jobId}.json`);
+  const rec = readJSON(recordPath, {});
+  const next = { ...rec, state: newState, updatedAt: Date.now() };
+  writeJSON(recordPath, next);
+  const stream = streams.get(jobId);
+  if (stream) sseSend(stream, 'state', { state: newState });
+  return next;
+}
+
+// form schema helper
+function buildFormSchema(ask) {
+  const requiredSet = new Set((ask || []).map((s) => String(s)));
+  const field = (key, label, input, extra = {}) => ({ key, label, input, required: requiredSet.has(key), ...extra });
+  return {
+    id: 'details',
+    title: 'Meeting details',
+    fields: [
+      field('topic', 'Topic', 'text'),
+      field('attendees', 'Attendees (emails)', 'email_list'),
+      field('urgency', 'Urgency', 'select', { options: ['low', 'medium', 'high'] }),
+      field('desiredTimeframe', 'Desired timeframe', 'text'),
+      field('background', 'Background', 'textarea'),
+      field('links', 'Links', 'text_list')
+    ]
+  };
+}
+
 // descope auth helpers (feature-toggle)
 let descope = null;
 if (DESCOPE_ENABLED) {
@@ -298,9 +327,10 @@ app.post('/api/agent/start', requireAuth, async (req, res) => {
     ownerUserId: req.user?.userId,
     initialMessage: req.body.initialMessage || '',
     createdAt: Date.now(),
-    messages: (req.body.initialMessage ? [ { role: 'user', content: req.body.initialMessage, at: Date.now() } ] : []),
+    messages: (req.body.initialMessage ? [ { role: 'user', agent: 'user', content: req.body.initialMessage, at: Date.now() } ] : []),
     evaluated: false,
-    lastDecision: null
+    lastDecision: null,
+    state: 'awaiting_input'
   });
   res.json({ jobId });
 });
@@ -317,6 +347,8 @@ app.get('/api/agent/stream/:jobId', requireAuth, async (req, res) => {
     emit('error', { error: 'Unknown jobId' });
     return closeStream(jobId);
   }
+  // emit current state
+  sseSend(res, 'state', { state: rec.state || 'awaiting_input' });
   // Do not evaluate yet; wait for first user message
 });
 
@@ -328,6 +360,7 @@ app.post('/api/agent/message', requireAuth, async (req, res) => {
   const rec = readJSON(recordPath, null);
   if (!rec) return res.status(404).json({ error: 'Unknown jobId' });
   const next = appendMessage(jobId, { role: 'user', agent: 'user', content });
+  updateState(jobId, 'evaluating');
   const stream = streams.get(jobId);
   if (stream) sseSend(stream, 'chat', { role: 'user', agent: 'user', content });
 
@@ -352,8 +385,19 @@ app.post('/api/agent/message', requireAuth, async (req, res) => {
     const userMsgs = (next.messages || []).filter(m => m.role === 'user').map(m => m.content);
     const chatText = await chatAgentGenerate({ ask, userMessages: userMsgs, decision });
     emit('gather', { ask });
+    // also emit a form schema to allow inline entry in UI
+    const formSchema = buildFormSchema(ask);
+    const streamForm = streams.get(jobId);
+    if (streamForm) sseSend(streamForm, 'form', { schema: formSchema });
     appendMessage(jobId, { role: 'assistant', agent: 'chat', content: chatText });
     emit('chat', { role: 'assistant', agent: 'chat', content: chatText });
+    if (decision.decision === 'APPROVE' && ask.length === 0) {
+      updateState(jobId, 'ready_to_schedule');
+    } else if (decision.decision === 'APPROVE') {
+      updateState(jobId, 'approved_needs_details');
+    } else {
+      updateState(jobId, 'awaiting_input');
+    }
     writeJSON(recordPath, { ...next, evaluated: true, lastDecision: decision });
   } catch (e) {
     // Already streamed error in agentDecideAndGather
@@ -370,6 +414,7 @@ app.post('/api/agent/complete', requireAuth, async (req, res) => {
   if (!rec) return res.status(404).json({ error: 'Unknown jobId' });
 
   writeJSON(recordPath, { ...rec, form });
+  updateState(jobId, 'ready_to_schedule');
 
   emit('log', { msg: 'Compiling briefing...' });
   const briefing = buildBriefing(req.user, form);
@@ -383,6 +428,7 @@ app.post('/api/agent/complete', requireAuth, async (req, res) => {
     return;
   }
   try {
+    updateState(jobId, 'scheduling');
     const auth = googleClient();
     const calendar = google.calendar({ version: 'v3', auth });
     const start = new Date();
@@ -400,13 +446,79 @@ app.post('/api/agent/complete', requireAuth, async (req, res) => {
       }
     });
     emit('scheduled', { eventId: event.data.id, htmlLink: event.data.htmlLink });
+    updateState(jobId, 'notified');
     emit('done', { status: 'SCHEDULED' });
     res.json({ ok: true, event: event.data });
     closeStream(jobId);
   } catch (e) {
     emit('error', { error: e.message || 'Calendar error' });
+    updateState(jobId, 'error');
     res.status(500).json({ error: 'Calendar error' });
     closeStream(jobId);
+  }
+});
+
+// submit inline form values (same fields as /complete, but values is a flat object)
+app.post('/api/agent/form/submit', requireAuth, async (req, res) => {
+  const { jobId, formId, values } = req.body || {};
+  if (!jobId || !values) return res.status(400).json({ error: 'jobId and values required' });
+  const stream = streams.get(jobId);
+  const emit = stream ? (e, d) => sseSend(stream, e, d) : () => {};
+  const recordPath = path.join(REQUESTS_DIR, `${jobId}.json`);
+  const rec = readJSON(recordPath, null);
+  if (!rec) return res.status(404).json({ error: 'Unknown jobId' });
+
+  // normalize values to the expected form shape
+  const toList = (v) => Array.isArray(v) ? v : (typeof v === 'string' ? v.split(',').map(s => s.trim()).filter(Boolean) : []);
+  const form = {
+    topic: values.topic || '',
+    attendees: toList(values.attendees),
+    urgency: values.urgency || 'medium',
+    desiredTimeframe: values.desiredTimeframe || '',
+    background: values.background || '',
+    links: toList(values.links)
+  };
+
+  writeJSON(recordPath, { ...rec, form });
+  updateState(jobId, 'ready_to_schedule');
+
+  emit('log', { msg: 'Compiling briefing...' });
+  const briefing = buildBriefing(req.user, form);
+  emit('briefing', { briefing });
+  appendMessage(jobId, { role: 'assistant', agent: 'chat', content: 'Thanks! I have what I need. Scheduling now...' });
+  emit('chat', { role: 'assistant', agent: 'chat', content: 'Thanks! I have what I need. Scheduling now...' });
+
+  if (!ensureOwnerGoogle(res)) {
+    emit('error', { error: 'Owner Google not connected' });
+    updateState(jobId, 'error');
+    return;
+  }
+  try {
+    updateState(jobId, 'scheduling');
+    const auth = googleClient();
+    const calendar = google.calendar({ version: 'v3', auth });
+    const start = new Date();
+    const end = new Date(start.getTime() + 30 * 60 * 1000);
+    const attendees = (form.attendees || []).map((e) => ({ email: e }));
+    const event = await calendar.events.insert({
+      calendarId: process.env.GOOGLE_CALENDAR_ID || 'primary',
+      sendUpdates: 'all',
+      requestBody: {
+        summary: form.topic || 'Meeting',
+        description: briefing,
+        start: { dateTime: start.toISOString() },
+        end: { dateTime: end.toISOString() },
+        attendees
+      }
+    });
+    emit('scheduled', { eventId: event.data.id, htmlLink: event.data.htmlLink });
+    updateState(jobId, 'notified');
+    emit('done', { status: 'SCHEDULED' });
+    return res.json({ ok: true, event: event.data });
+  } catch (e) {
+    emit('error', { error: e.message || 'Calendar error' });
+    updateState(jobId, 'error');
+    return res.status(500).json({ error: 'Calendar error' });
   }
 });
 

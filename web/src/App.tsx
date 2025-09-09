@@ -98,9 +98,11 @@ function RequestMeeting() {
   const [form, setForm] = useState<any>({ topic: '', attendees: '', urgency: 'medium', desiredTimeframe: '', background: '', links: '' });
   const [briefing, setBriefing] = useState<string>('');
   const [status, setStatus] = useState<string>('idle');
-  const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; agent?: 'user'|'chat'|'decision' }>>([]);
+  type ChatMessage = { role: 'user' | 'assistant'; content?: string; agent?: 'user'|'chat'|'decision'; kind?: 'text'|'form'; schema?: any };
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [debug, setDebug] = useState(false);
+  const [formSubmitting, setFormSubmitting] = useState(false);
 
   const start = async () => {
     setLog([]);
@@ -152,6 +154,12 @@ function RequestMeeting() {
         const { decision } = JSON.parse(e.data);
         const content = `[decision] ${decision.decision}: ${decision.rationale || ''}`;
         setMessages((x) => [ ...x, { role: 'assistant', content, agent: 'decision' } ]);
+      } catch { /* ignore */ }
+    });
+    es.addEventListener('form', (e: any) => {
+      try {
+        const { schema } = JSON.parse(e.data);
+        setMessages((x) => [ ...x, { role: 'assistant', kind: 'form', schema } ]);
       } catch { /* ignore */ }
     });
     es.addEventListener('scheduled', () => setStatus('scheduled'));
@@ -241,21 +249,56 @@ function RequestMeeting() {
         <div style={{ flex: 1, minWidth: 300 }}>
           <h3>Conversation</h3>
           <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: 8, height: 300, overflowY: 'auto', background: '#fff' }}>
-            {(debug ? messages : messages.filter(m => m.agent !== 'decision')).map((m, i) => (
-              <div key={i} style={{ marginBottom: 8, display: 'flex' }}>
-                <div style={{
-                  marginLeft: m.role === 'assistant' ? 0 : 'auto',
-                  maxWidth: '80%',
-                  background: m.role === 'assistant' ? '#f1f5f9' : '#dbeafe',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: 6,
-                  padding: '6px 8px'
-                }}>
-                  <div style={{ fontSize: 12, color: '#475569', marginBottom: 2 }}>{m.role}{debug && m.agent ? ` · ${m.agent}` : ''}</div>
-                  <div>{m.content}</div>
+            {(debug ? messages : messages.filter(m => m.agent !== 'decision')).map((m, i) => {
+              if (m.kind === 'form' && m.schema) {
+                const schema = m.schema as any;
+                return (
+                  <div key={i} style={{ marginBottom: 8, display: 'flex' }}>
+                    <div style={{
+                      marginLeft: 0,
+                      maxWidth: '90%',
+                      background: '#f8fafc',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: 6,
+                      padding: '8px 10px',
+                      width: '100%'
+                    }}>
+                      <div style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>assistant · form</div>
+                      <div style={{ fontWeight: 600, marginBottom: 6 }}>{schema.title || 'Details'}</div>
+                      <FormFields schema={schema} disabled={formSubmitting} onSubmit={async (values) => {
+                        if (!jobId) return;
+                        setFormSubmitting(true);
+                        try {
+                          await fetch('/api/agent/form/submit', {
+                            method: 'POST',
+                            credentials: 'include',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ jobId, formId: schema.id, values })
+                          });
+                        } finally {
+                          setFormSubmitting(false);
+                        }
+                      }} />
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <div key={i} style={{ marginBottom: 8, display: 'flex' }}>
+                  <div style={{
+                    marginLeft: m.role === 'assistant' ? 0 : 'auto',
+                    maxWidth: '80%',
+                    background: m.role === 'assistant' ? '#f1f5f9' : '#dbeafe',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: 6,
+                    padding: '6px 8px'
+                  }}>
+                    <div style={{ fontSize: 12, color: '#475569', marginBottom: 2 }}>{m.role}{debug && m.agent ? ` · ${m.agent}` : ''}</div>
+                    <div>{m.content}</div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {messages.length === 0 && <div style={{ color: '#64748b' }}>No messages yet.</div>}
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
@@ -278,7 +321,7 @@ function RequestMeeting() {
             </div>
           )}
 
-          {decision?.decision === 'APPROVE' && (
+          {decision?.decision === 'APPROVE' && !messages.some(m => m.kind === 'form') && (
             <div style={{ marginBottom: 16 }}>
               <h3>Provide Details</h3>
               <input placeholder="Topic" value={form.topic} onChange={e => setForm({ ...form, topic: e.target.value })} />
@@ -310,6 +353,36 @@ function RequestMeeting() {
             <div>Status: {status}</div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Inline form renderer
+function FormFields({ schema, onSubmit, disabled }: { schema: any; onSubmit: (vals: any) => void | Promise<void>; disabled?: boolean }) {
+  const [vals, setVals] = useState<any>({ urgency: 'medium' });
+  const set = (k: string, v: any) => setVals((x: any) => ({ ...x, [k]: v }));
+  const fieldEl = (f: any) => {
+    const common = { disabled } as any;
+    if (f.input === 'textarea') return <textarea {...common} rows={3} placeholder={f.label} value={vals[f.key] || ''} onChange={e => set(f.key, e.target.value)} />;
+    if (f.input === 'select') return (
+      <select {...common} value={vals[f.key] || (f.options?.[0] || '')} onChange={e => set(f.key, e.target.value)}>
+        {(f.options || []).map((o: string) => <option key={o} value={o}>{o}</option>)}
+      </select>
+    );
+    return <input {...common} placeholder={f.label} value={vals[f.key] || ''} onChange={e => set(f.key, e.target.value)} />;
+  };
+  return (
+    <div>
+      <div style={{ display: 'grid', gap: 6, gridTemplateColumns: '1fr 1fr 120px 1fr' }}>
+        {(schema.fields || []).map((f: any) => (
+          <div key={f.key} style={{ gridColumn: f.input === 'textarea' ? '1 / -1' : 'auto' }}>
+            {fieldEl(f)}
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <button disabled={disabled} onClick={() => onSubmit(vals)}>Submit Details & Schedule</button>
       </div>
     </div>
   );
