@@ -27,6 +27,10 @@ const REQUESTS_DIR = path.join(TMP_DIR, 'requests');
 [TMP_DIR, REQUESTS_DIR].forEach((p) => {
   if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
 });
+const USER_TOKENS_DIR = path.join(TMP_DIR, 'user_google_tokens');
+[TMP_DIR, REQUESTS_DIR, USER_TOKENS_DIR].forEach((p) => {
+  if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+});
 function readJSON(p, fallback) {
   try {
     return JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -146,11 +150,22 @@ function googleClient() {
     process.env.GOOGLE_CLIENT_SECRET,
     process.env.GOOGLE_REDIRECT_URI
   );
+  // Prefer environment-provided credentials (e.g., from Descope Outbound Apps)
+  const envAccess = process.env.GOOGLE_ACCESS_TOKEN;
+  const envRefresh = process.env.GOOGLE_REFRESH_TOKEN;
+  if (envAccess || envRefresh) {
+    const expiry = process.env.GOOGLE_TOKEN_EXPIRY ? Number(process.env.GOOGLE_TOKEN_EXPIRY) : undefined;
+    oAuth2Client.setCredentials({ access_token: envAccess, refresh_token: envRefresh, expiry_date: expiry });
+    return oAuth2Client;
+  }
+  // Fallback to locally stored tokens
   const tokens = readJSON(TOKENS_PATH, null);
   if (tokens) oAuth2Client.setCredentials(tokens);
   return oAuth2Client;
 }
 function ensureOwnerGoogle(res) {
+  // If tokens are supplied via environment, treat as connected
+  if (process.env.GOOGLE_ACCESS_TOKEN || process.env.GOOGLE_REFRESH_TOKEN) return true;
   const tokens = readJSON(TOKENS_PATH, null);
   if (!tokens) {
     res.status(400).json({ error: 'Owner Google not connected' });
@@ -159,13 +174,37 @@ function ensureOwnerGoogle(res) {
   return true;
 }
 
+// per-user tokens helpers
+function userTokensPath(userId) {
+  return path.join(USER_TOKENS_DIR, `${userId}.json`);
+}
+function hasUserGoogle(userId) {
+  if (!userId) return false;
+  try { fs.accessSync(userTokensPath(userId)); return true; } catch { return false; }
+}
+function googleClientForUser(userId) {
+  const oAuth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+  const tokens = readJSON(userTokensPath(userId), null);
+  if (tokens) oAuth2Client.setCredentials(tokens);
+  return oAuth2Client;
+}
+
 // agent logic
 const openaiApiKey = process.env.OPENAI_API_KEY;
 const openai = openaiApiKey ? new OpenAI({ apiKey: openaiApiKey }) : null;
 const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
 function loadConfig() {
-  return readJSON(CONFIG_PATH, {
+  // Allow hardcoded configuration via environment variables
+  const listFromEnv = (val, fallback) => {
+    if (!val) return fallback;
+    return String(val).split(',').map((s) => s.trim()).filter(Boolean);
+  };
+  const defaultCfg = {
     dueDiligenceChecklist: [
       'Have you searched our docs / website?',
       'Do you have a clear agenda and desired outcome?',
@@ -173,7 +212,16 @@ function loadConfig() {
     ],
     decisionPolicy: 'conservative',
     requiredFieldsOnApprove: ['topic', 'attendees', 'urgency', 'desiredTimeframe']
-  });
+  };
+  if (String(process.env.CONFIG_HARDCODED || 'true') === 'true') {
+    return {
+      dueDiligenceChecklist: listFromEnv(process.env.DUE_DILIGENCE_CHECKLIST, defaultCfg.dueDiligenceChecklist),
+      decisionPolicy: process.env.DECISION_POLICY || defaultCfg.decisionPolicy,
+      requiredFieldsOnApprove: listFromEnv(process.env.REQUIRED_FIELDS_ON_APPROVE, defaultCfg.requiredFieldsOnApprove)
+    };
+  }
+  // Fallback to file-based config
+  return readJSON(CONFIG_PATH, defaultCfg);
 }
 
 async function agentDecideAndGather({ initialMessage, userContext }, emit) {
@@ -318,6 +366,85 @@ app.get('/api/calendar/availability', requireAuth, requireRole('owner'), async (
   res.json({ count: events.data.items?.length || 0 });
 });
 
+// suggest mutual times between owner and requester
+app.get('/api/calendar/suggest', requireAuth, async (req, res) => {
+  // Parameters (optional): days=7, durationMins=30, windowStart=09:00, windowEnd=17:00
+  const days = Number(req.query.days || 7);
+  const durationMins = Number(req.query.durationMins || 30);
+  const windowStart = String(req.query.windowStart || '09:00');
+  const windowEnd = String(req.query.windowEnd || '17:00');
+
+  // Build clients
+  if (!ensureOwnerGoogle(res) && !hasUserGoogle(req.user?.userId)) return; // error already sent for owner case
+  const ownerAuth = googleClient();
+  const userAuth = hasUserGoogle(req.user?.userId) ? googleClientForUser(req.user?.userId) : null;
+  if (!userAuth) return res.status(400).json({ error: 'Requester Google not connected' });
+
+  const calendarOwner = google.calendar({ version: 'v3', auth: ownerAuth });
+  const calendarUser = google.calendar({ version: 'v3', auth: userAuth });
+
+  const now = new Date();
+  const until = new Date(Date.now() + days * 24 * 3600 * 1000);
+
+  const listEvents = async (calendar, calendarId) => {
+    const r = await calendar.events.list({
+      calendarId,
+      timeMin: now.toISOString(),
+      timeMax: until.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime'
+    });
+    return (r.data.items || []).map(e => ({
+      start: new Date(e.start?.dateTime || e.start?.date),
+      end: new Date(e.end?.dateTime || e.end?.date)
+    }));
+  };
+
+  const ownerEvents = await listEvents(calendarOwner, process.env.GOOGLE_CALENDAR_ID || 'primary');
+  const userEvents = await listEvents(calendarUser, 'primary');
+
+  const parseHM = (s) => { const [h, m] = s.split(':').map(Number); return { h: h || 0, m: m || 0 }; };
+  const { h: wsH, m: wsM } = parseHM(windowStart);
+  const { h: weH, m: weM } = parseHM(windowEnd);
+
+  const slotMs = durationMins * 60 * 1000;
+  const suggestions = [];
+  for (let d = 0; d < days; d++) {
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d);
+    const dayStart = new Date(day); dayStart.setHours(wsH, wsM, 0, 0);
+    const dayEnd = new Date(day); dayEnd.setHours(weH, weM, 0, 0);
+    for (let t = dayStart.getTime(); t + slotMs <= dayEnd.getTime(); t += slotMs) {
+      const s = new Date(t); const e = new Date(t + slotMs);
+      const busyOwner = ownerEvents.some(ev => !(e <= ev.start || s >= ev.end));
+      const busyUser = userEvents.some(ev => !(e <= ev.start || s >= ev.end));
+      if (!busyOwner && !busyUser && s > now) suggestions.push({ start: s.toISOString(), end: e.toISOString() });
+      if (suggestions.length >= 10) break;
+    }
+    if (suggestions.length >= 10) break;
+  }
+
+  res.json({ suggestions });
+});
+
+// per-user google oauth (local demo storage)
+app.get('/api/user/calendar/status', requireAuth, (req, res) => {
+  const connected = hasUserGoogle(req.user?.userId);
+  res.json({ connected });
+});
+app.get('/api/user/calendar/oauth/initiate', requireAuth, (req, res) => {
+  const o = googleClient();
+  const scopes = ['https://www.googleapis.com/auth/calendar'];
+  const url = o.generateAuthUrl({ access_type: 'offline', scope: scopes, prompt: 'consent' });
+  res.json({ url });
+});
+app.get('/api/user/calendar/oauth/callback', requireAuth, async (req, res) => {
+  const code = req.query.code;
+  const o = googleClient();
+  const { tokens } = await o.getToken(code);
+  writeJSON(userTokensPath(req.user?.userId), tokens);
+  res.send('Your Google account is connected. You can close this tab.');
+});
+
 // agent start + sse
 app.post('/api/agent/start', requireAuth, async (req, res) => {
   const jobId = uuidv4();
@@ -425,13 +552,12 @@ app.post('/api/agent/complete', requireAuth, async (req, res) => {
   appendMessage(jobId, { role: 'assistant', agent: 'chat', content: 'I prepared a briefing draft based on your details. Scheduling now...' });
   if (stream2) sseSend(stream2, 'chat', { role: 'assistant', agent: 'chat', content: 'I prepared a briefing draft based on your details. Scheduling now...' });
 
-  if (!ensureOwnerGoogle(res)) {
-    emit('error', { error: 'Owner Google not connected' });
-    return;
-  }
+  // prefer requester tokens; fallback to owner
+  const useUser = hasUserGoogle(req.user?.userId);
+  if (!useUser && !ensureOwnerGoogle(res)) { emit('error', { error: 'Owner Google not connected' }); return; }
   try {
     updateState(jobId, 'scheduling');
-    const auth = googleClient();
+    const auth = useUser ? googleClientForUser(req.user?.userId) : googleClient();
     const calendar = google.calendar({ version: 'v3', auth });
     const start = new Date();
     const end = new Date(start.getTime() + 30 * 60 * 1000);
@@ -490,14 +616,12 @@ app.post('/api/agent/form/submit', requireAuth, async (req, res) => {
   appendMessage(jobId, { role: 'assistant', agent: 'chat', content: 'Thanks! I have what I need. Scheduling now...' });
   emit('chat', { role: 'assistant', agent: 'chat', content: 'Thanks! I have what I need. Scheduling now...' });
 
-  if (!ensureOwnerGoogle(res)) {
-    emit('error', { error: 'Owner Google not connected' });
-    updateState(jobId, 'error');
-    return;
-  }
+  // prefer requester tokens; fallback to owner
+  const useUser = hasUserGoogle(req.user?.userId);
+  if (!useUser && !ensureOwnerGoogle(res)) { emit('error', { error: 'Owner Google not connected' }); updateState(jobId, 'error'); return; }
   try {
     updateState(jobId, 'scheduling');
-    const auth = googleClient();
+    const auth = useUser ? googleClientForUser(req.user?.userId) : googleClient();
     const calendar = google.calendar({ version: 'v3', auth });
     const start = new Date();
     const end = new Date(start.getTime() + 30 * 60 * 1000);

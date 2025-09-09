@@ -275,6 +275,9 @@ function RequestMeeting() {
       <div className="card" style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
         <div className="subtitle">Signed in as {user?.email || 'mock-user@example.com'}</div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          {user?.email === 'lancepettay@gmail.com' && (
+            <Link to="/owner" className="subtitle" style={{ textDecoration: 'none' }}>Owner</Link>
+          )}
           {DESCOPE_ENABLED && <button onClick={() => logout()}>Sign out</button>}
           <label className="subtitle"><input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} /> Debug</label>
         </div>
