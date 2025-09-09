@@ -207,6 +207,54 @@ function googleClientForUser(userId) {
   return oAuth2Client;
 }
 
+// internal helper: suggest slots (owner-only or mutual if user connected)
+async function suggestSlotsCore(userId, { days = 7, durationMins = 30, windowStart = '09:00', windowEnd = '17:00', ownerOnly = true } = {}) {
+  if (!ensureOwnerGoogle({ status: () => ({ json: () => {} }) })) return { suggestions: [] }; // no-op when not connected
+  const ownerAuth = googleClient();
+  const userHasTokens = hasUserGoogle(userId);
+  const useOwnerOnly = ownerOnly || !userHasTokens;
+  const userAuth = !useOwnerOnly ? googleClientForUser(userId) : null;
+
+  const calendarOwner = google.calendar({ version: 'v3', auth: ownerAuth });
+  const calendarUser = !useOwnerOnly && userAuth ? google.calendar({ version: 'v3', auth: userAuth }) : null;
+  const now = new Date();
+  const until = new Date(Date.now() + days * 24 * 3600 * 1000);
+  const listEvents = async (calendar, calendarId) => {
+    const r = await calendar.events.list({
+      calendarId,
+      timeMin: now.toISOString(),
+      timeMax: until.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime'
+    });
+    return (r.data.items || []).map(e => ({
+      start: new Date(e.start?.dateTime || e.start?.date),
+      end: new Date(e.end?.dateTime || e.end?.date)
+    }));
+  };
+  const ownerEvents = await listEvents(calendarOwner, process.env.GOOGLE_CALENDAR_ID || 'primary');
+  const userEvents = calendarUser ? await listEvents(calendarUser, 'primary') : [];
+  const parseHM = (s) => { const [h, m] = String(s).split(':').map(Number); return { h: h || 0, m: m || 0 }; };
+  const { h: wsH, m: wsM } = parseHM(windowStart);
+  const { h: weH, m: weM } = parseHM(windowEnd);
+  const slotMs = durationMins * 60 * 1000;
+  const suggestions = [];
+  for (let d = 0; d < days; d++) {
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d);
+    const dayStart = new Date(day); dayStart.setHours(wsH, wsM, 0, 0);
+    const dayEnd = new Date(day); dayEnd.setHours(weH, weM, 0, 0);
+    for (let t = dayStart.getTime(); t + slotMs <= dayEnd.getTime(); t += slotMs) {
+      const s = new Date(t); const e = new Date(t + slotMs);
+      const busyOwner = ownerEvents.some(ev => !(e <= ev.start || s >= ev.end));
+      const busyUser = useOwnerOnly ? false : userEvents.some(ev => !(e <= ev.start || s >= ev.end));
+      if (!busyOwner && !busyUser && s > now) suggestions.push({ start: s.toISOString(), end: e.toISOString() });
+      if (suggestions.length >= 10) break;
+    }
+    if (suggestions.length >= 10) break;
+  }
+  return { suggestions, ownerOnly: useOwnerOnly };
+}
+
 // agent logic
 const openaiApiKey = process.env.OPENAI_API_KEY;
 const openai = openaiApiKey ? new OpenAI({ apiKey: openaiApiKey }) : null;
@@ -518,13 +566,21 @@ app.post('/api/agent/message', requireAuth, async (req, res) => {
       .filter((m) => m.role === 'user')
       .map((m) => m.content)
       .join('\n');
-    const decision = await agentDecideAndGather(
-      { initialMessage: combined, userContext: { email: req.user?.email } },
-      emit
-    );
+    // MCP-style tool calls: decision agent and calendar agent
+    const toolContext = { actor: { email: req.user?.email, userId: req.user?.userId } };
+    emit('tool', { name: 'decision.evaluate', status: 'call', args: { message: combined }, ...toolContext });
+    const decision = await agentDecideAndGather({ initialMessage: combined, userContext: { email: req.user?.email } }, emit);
+    emit('tool', { name: 'decision.evaluate', status: 'result', result: decision, ...toolContext });
+    emit('agent', { role: 'assistant', agent: 'decision', decision });
+    // calendar tool suggestion (demonstration): only when approved
+    if (decision.decision === 'APPROVE') {
+      emit('tool', { name: 'calendar.suggest', status: 'call', args: { ownerOnly: true }, ...toolContext });
+      const slots = await suggestSlotsCore(req.user?.userId, { ownerOnly: true });
+      emit('tool', { name: 'calendar.suggest', status: 'result', result: { count: (slots.suggestions || []).length }, ...toolContext });
+      emit('agent', { role: 'assistant', agent: 'calendar', suggestions: slots.suggestions });
+    }
     // store decision agent message and stream on 'agent'
     appendMessage(jobId, { role: 'assistant', agent: 'decision', content: JSON.stringify(decision) });
-    if (stream) sseSend(stream, 'agent', { role: 'assistant', agent: 'decision', decision });
 
     const ask = (decision.missing && decision.missing.length > 0)
       ? decision.missing
@@ -555,7 +611,7 @@ app.post('/api/agent/message', requireAuth, async (req, res) => {
 });
 
 app.post('/api/agent/complete', requireAuth, async (req, res) => {
-  const { jobId, form } = req.body;
+  const { jobId, form, slot } = req.body || {};
   const stream = streams.get(jobId);
   const emit = stream ? (e, d) => sseSend(stream, e, d) : () => {};
   const recordPath = path.join(REQUESTS_DIR, `${jobId}.json`);
@@ -579,9 +635,10 @@ app.post('/api/agent/complete', requireAuth, async (req, res) => {
     updateState(jobId, 'scheduling');
     const auth = useUser ? googleClientForUser(req.user?.userId) : googleClient();
     const calendar = google.calendar({ version: 'v3', auth });
-    const start = new Date();
-    const end = new Date(start.getTime() + 30 * 60 * 1000);
+    const start = slot?.start ? new Date(slot.start) : new Date();
+    const end = slot?.end ? new Date(slot.end) : new Date(start.getTime() + 30 * 60 * 1000);
     const attendees = (form.attendees || []).map((e) => ({ email: e }));
+    emit('tool', { name: 'calendar.schedule', status: 'call', args: { start: start.toISOString(), end: end.toISOString(), attendees: attendees.map(a => a.email) }, actor: { email: req.user?.email, userId: req.user?.userId } });
     const event = await calendar.events.insert({
       calendarId: process.env.GOOGLE_CALENDAR_ID || 'primary',
       sendUpdates: 'all',
@@ -593,6 +650,7 @@ app.post('/api/agent/complete', requireAuth, async (req, res) => {
         attendees
       }
     });
+    emit('tool', { name: 'calendar.schedule', status: 'result', result: { id: event.data.id, link: event.data.htmlLink } });
     emit('scheduled', { eventId: event.data.id, htmlLink: event.data.htmlLink });
     updateState(jobId, 'notified');
     emit('done', { status: 'SCHEDULED' });
