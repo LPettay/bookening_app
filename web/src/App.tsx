@@ -132,7 +132,7 @@ function RequestMeeting() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [decision, setDecision] = useState<any>(null);
-  const [form, setForm] = useState<any>({ topic: '', attendees: '', urgency: 'medium', desiredTimeframe: '', background: '', links: '' });
+  const [form, setForm] = useState<any>({ topic: '', attendees: '', desiredTimeframe: '', background: '', links: '' });
   const [briefing, setBriefing] = useState<string>('');
   const [status, setStatus] = useState<string>('idle');
   const [slotSuggestions, setSlotSuggestions] = useState<{ start: string; end: string }[]>([]);
@@ -256,7 +256,6 @@ function RequestMeeting() {
     const payload = {
       topic: form.topic,
       attendees: form.attendees.split(',').map((s: string) => s.trim()).filter(Boolean),
-      urgency: form.urgency,
       desiredTimeframe: form.desiredTimeframe,
       background: form.background,
       links: form.links.split(',').map((s: string) => s.trim()).filter(Boolean)
@@ -282,17 +281,22 @@ function RequestMeeting() {
   };
 
   const bookSlot = async (slot: { start: string; end: string }) => {
-    // Populate a minimal form and reuse existing scheduling pipeline
-    setForm((f: any) => ({
-      topic: f.topic || 'Meeting',
-      attendees: f.attendees,
-      urgency: f.urgency || 'medium',
+    if (!jobId) return;
+    const f = {
+      topic: (form as any).topic || 'Meeting',
+      attendees: (form as any).attendees,
       desiredTimeframe: `${new Date(slot.start).toLocaleString()} - ${new Date(slot.end).toLocaleString()}`,
-      background: f.background,
-      links: f.links
-    }));
-    // Tell the assistant we're scheduling now
-    await complete();
+      background: (form as any).background,
+      links: (form as any).links
+    } as any;
+    try {
+      await fetch('/api/agent/complete', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId, form: f, slot })
+      });
+    } catch {}
   };
 
   const sendChat = async () => {
@@ -347,10 +351,17 @@ function RequestMeeting() {
               if (m.kind === 'form' && m.schema) {
                 const schema = m.schema as any;
                 return (
-                  <div key={i} className="bubble assistant">
+                  <div key={i} className="bubble assistant form">
                       <div className="subtitle">assistant · form</div>
                       <div style={{ fontWeight: 600, marginBottom: 6 }}>{schema.title || 'Details'}</div>
-                      <FormFields schema={schema} disabled={formSubmitting} onSubmit={async (values) => {
+                      <FormFields
+                        schema={schema}
+                        prefill={{
+                          topic: (messages.filter(m => m.role==='user').map(m => m.content).slice(-1)[0] || ''),
+                          background: messages.filter(m => m.role==='user').map(m => m.content).slice(-3).join('\n')
+                        }}
+                        disabled={formSubmitting}
+                        onSubmit={async (values, slot) => {
                         if (!jobId) return;
                         setFormSubmitting(true);
                         try {
@@ -358,12 +369,13 @@ function RequestMeeting() {
                             method: 'POST',
                             credentials: 'include',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ jobId, formId: schema.id, values })
+                            body: JSON.stringify({ jobId, formId: schema.id, values, slot })
                           });
                         } finally {
                           setFormSubmitting(false);
                         }
-                      }} />
+                      }}
+                      />
                   </div>
                 );
               }
@@ -393,17 +405,7 @@ function RequestMeeting() {
             />
             <button onClick={sendChat} disabled={!jobId || !chatInput.trim()}>Send</button>
           </div>
-          <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button onClick={fetchSlots}>Suggest times</button>
-            {slotSuggestions.length > 0 && <span className="subtitle">Pick a slot:</span>}
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {slotSuggestions.map((s, i) => (
-                <button key={i} onClick={() => bookSlot(s)} style={{ background: '#1f2a44' }}>
-                  {new Date(s.start).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                </button>
-              ))}
-            </div>
-          </div>
+          {/* Suggest times moved to post-approval section */}
         </div>
 
         <div className="card">
@@ -413,22 +415,38 @@ function RequestMeeting() {
             </div>
           )}
 
-          {decision?.decision === 'APPROVE' && !messages.some(m => m.kind === 'form') && (
+          {decision?.decision === 'APPROVE' && (
             <div style={{ marginBottom: 16 }}>
-              <h3>Provide Details</h3>
-              <input placeholder="Topic" value={form.topic} onChange={e => setForm({ ...form, topic: e.target.value })} />
+              <h3>Finalize Details</h3>
+              <input
+                placeholder="Topic"
+                value={form.topic || (messages.filter(m => m.role==='user').map(m => m.content).slice(-1)[0] || '')}
+                onChange={e => setForm({ ...form, topic: e.target.value })}
+              />
+              <textarea
+                rows={3}
+                placeholder="Background"
+                value={form.background || messages.filter(m => m.role==='user').map(m => m.content).slice(-3).join('\n')}
+                onChange={e => setForm({ ...form, background: e.target.value })}
+              />
               <input placeholder="Attendees (comma-separated emails)"
                 value={form.attendees} onChange={e => setForm({ ...form, attendees: e.target.value })} />
-              <select value={form.urgency} onChange={e => setForm({ ...form, urgency: e.target.value })}>
-                <option value="low">low</option><option value="medium">medium</option><option value="high">high</option>
-              </select>
-              <input placeholder="Desired timeframe" value={form.desiredTimeframe}
-                onChange={e => setForm({ ...form, desiredTimeframe: e.target.value })} />
-              <textarea rows={3} placeholder="Background"
-                value={form.background} onChange={e => setForm({ ...form, background: e.target.value })} />
-              <input placeholder="Links (comma-separated URLs)"
-                value={form.links} onChange={e => setForm({ ...form, links: e.target.value })} />
-              <div><button onClick={complete}>Submit Details & Schedule</button></div>
+
+              <div style={{ marginTop: 12 }}>
+                <div className="subtitle">Pick a date, then choose a time</div>
+                <button onClick={fetchSlots}>Load suggested times</button>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                  {slotSuggestions.map((s, i) => (
+                    <button key={i} onClick={() => bookSlot(s)} style={{ background: '#1f2a44' }}>
+                      {new Date(s.start).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ marginTop: 8 }}>
+                <button onClick={complete}>Submit Details & Schedule</button>
+              </div>
             </div>
           )}
 
@@ -451,30 +469,63 @@ function RequestMeeting() {
 }
 
 // Inline form renderer
-function FormFields({ schema, onSubmit, disabled }: { schema: any; onSubmit: (vals: any) => void | Promise<void>; disabled?: boolean }) {
-  const [vals, setVals] = useState<any>({ urgency: 'medium' });
+function FormFields({ schema, onSubmit, disabled, prefill }: { schema: any; onSubmit: (vals: any, slot?: { start: string; end: string }) => void | Promise<void>; disabled?: boolean; prefill?: Record<string, any> }) {
+  const [vals, setVals] = useState<any>({ urgency: 'medium', ...(prefill || {}) });
+  const [slots, setSlots] = useState<{ start: string; end: string }[]>([]);
+  const [selectedSlot, setSelectedSlot] = useState<{ start: string; end: string } | undefined>(undefined);
   const set = (k: string, v: any) => setVals((x: any) => ({ ...x, [k]: v }));
   const fieldEl = (f: any) => {
-    const common = { disabled } as any;
-    if (f.input === 'textarea') return <textarea {...common} rows={3} placeholder={f.label} value={vals[f.key] || ''} onChange={e => set(f.key, e.target.value)} />;
-    if (f.input === 'select') return (
-      <select {...common} value={vals[f.key] || (f.options?.[0] || '')} onChange={e => set(f.key, e.target.value)}>
-        {(f.options || []).map((o: string) => <option key={o} value={o}>{o}</option>)}
-      </select>
+    const common = { disabled, style: { width: '100%' } } as any;
+    if (f.input === 'textarea') return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <label className="subtitle">{f.label}</label>
+        <textarea {...common} rows={4} placeholder={f.label} value={vals[f.key] || ''} onChange={e => set(f.key, e.target.value)} />
+      </div>
     );
-    return <input {...common} placeholder={f.label} value={vals[f.key] || ''} onChange={e => set(f.key, e.target.value)} />;
+    if (f.input === 'select') return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <label className="subtitle">{f.label}</label>
+        <select {...common} value={vals[f.key] || (f.options?.[0] || '')} onChange={e => set(f.key, e.target.value)}>
+          {(f.options || []).map((o: string) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      </div>
+    );
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <label className="subtitle">{f.label}</label>
+        <input {...common} placeholder={f.label} value={vals[f.key] || ''} onChange={e => set(f.key, e.target.value)} />
+      </div>
+    );
+  };
+  const loadSlots = async () => {
+    try {
+      const r = await fetch('/api/calendar/suggest?ownerOnly=true&days=7&durationMins=30', { credentials: 'include' });
+      const j = await r.json();
+      if (Array.isArray(j?.suggestions)) setSlots(j.suggestions);
+    } catch {}
   };
   return (
     <div>
-      <div style={{ display: 'grid', gap: 6, gridTemplateColumns: '1fr 1fr 120px 1fr' }}>
+      <div style={{ display: 'grid', gap: 12, gridTemplateColumns: '1fr' }}>
         {(schema.fields || []).map((f: any) => (
-          <div key={f.key} style={{ gridColumn: f.input === 'textarea' ? '1 / -1' : 'auto' }}>
+          <div key={f.key}>
             {fieldEl(f)}
           </div>
         ))}
       </div>
-      <div style={{ marginTop: 8 }}>
-        <button disabled={disabled} onClick={() => onSubmit(vals)}>Submit Details & Schedule</button>
+      <div style={{ marginTop: 12 }}>
+        <div className="subtitle">Pick a date, then choose a time</div>
+        <button disabled={disabled} onClick={loadSlots}>Load suggested times</button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+          {slots.map((s, i) => (
+            <button key={i} disabled={disabled} onClick={() => setSelectedSlot(s)} style={{ background: selectedSlot === s ? '#334155' : '#1f2a44' }}>
+              {new Date(s.start).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <button disabled={disabled} onClick={() => onSubmit(vals, selectedSlot)}>Submit Details & Schedule</button>
       </div>
     </div>
   );

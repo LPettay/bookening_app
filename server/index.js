@@ -70,12 +70,9 @@ function buildFormSchema(ask) {
     id: 'details',
     title: 'Meeting details',
     fields: [
-      field('topic', 'Topic', 'text'),
-      field('attendees', 'Attendees (emails)', 'email_list'),
-      field('urgency', 'Urgency', 'select', { options: ['low', 'medium', 'high'] }),
-      field('desiredTimeframe', 'Desired timeframe', 'text'),
-      field('background', 'Background', 'textarea'),
-      field('links', 'Links', 'text_list')
+      field('topic', 'Meeting title', 'text'),
+      field('attendees', 'Attendees (comma-separated emails)', 'email_list'),
+      field('background', 'Background', 'textarea')
     ]
   };
 }
@@ -272,8 +269,8 @@ function loadConfig() {
       'Do you have a clear agenda and desired outcome?',
       'Is email/async insufficient?'
     ],
-    decisionPolicy: 'conservative',
-    requiredFieldsOnApprove: ['topic', 'attendees', 'urgency', 'desiredTimeframe']
+    decisionPolicy: 'balanced',
+    requiredFieldsOnApprove: ['topic', 'attendees', 'desiredTimeframe']
   };
   if (String(process.env.CONFIG_HARDCODED || 'true') === 'true') {
     return {
@@ -290,15 +287,18 @@ async function agentDecideAndGather({ initialMessage, userContext }, emit) {
   const cfg = loadConfig();
   emit('log', { msg: 'Evaluating due diligence...' });
 
-  const sys = `You are a calendar gatekeeper. Consider the due diligence checklist and policy=${cfg.decisionPolicy}.
-If insufficient diligence or unclear value, decline with rationale and ask for missing info.
-If warranted, approve and gather: topic, attendees (emails), urgency (low/med/high), desiredTimeframe, background context, links.`;
+  const sys = `You are a pragmatic meeting triage agent.
+Policy=${cfg.decisionPolicy}. Focus on the user's diligence (clear agenda, desired outcome, prior effort) and the expected value of a meeting.
+Do not request dates/times at this stage; scheduling happens later after approval.
+Be moderately lenient: if the user shows reasonable diligence and a clear goal, APPROVE; otherwise briefly DECLINE with rationale and ask for only the truly missing diligence details.
+When APPROVED, you will later gather: topic, attendees (emails), desiredTimeframe, background, links.
+In your JSON, the "missing" array should contain diligence-only items (choose from: agenda, outcome, priorResearch, context, links, attendees). Never include date/time.`;
 
   const prompt = `
 Checklist: ${cfg.dueDiligenceChecklist.join(' | ')}
 User: ${initialMessage}
 Known context: ${JSON.stringify(userContext || {})}
-Decide: APPROVE or DECLINE with brief rationale. Then list missing fields if any.
+Decide: APPROVE or DECLINE with brief rationale. Then list missing diligence fields if any (no dates or times).
 Respond in JSON with: { "decision": "APPROVE|DECLINE", "rationale": string, "missing": string[] }
 `;
 
@@ -347,9 +347,9 @@ async function chatAgentGenerate({ ask, userMessages, decision, transcript }) {
   if (!openai) return fallback();
 
   const system = `You are a warm, concise mentor (like a helpful professor).
-You have access to the conversation transcript and should retain context.
-Always briefly acknowledge salient details the user already provided (1 short clause), then only ask for information that is still missing.
-Never ask for the same thing twice; do not repeat questions the user has answered.
+Maintain memory using the provided transcript.
+Do not ask for dates or times; scheduling happens later after approval.
+Always acknowledge what was already given; ask at most one clarifying diligence question if truly needed.
 Speak naturally in 1-3 short sentences. Avoid mentioning internal decision processes.`;
 
   const userSummary = `Conversation transcript (most recent first):\n${(transcript || []).join('\n')}`;
@@ -669,7 +669,7 @@ app.post('/api/agent/complete', requireAuth, async (req, res) => {
 
 // submit inline form values (same fields as /complete, but values is a flat object)
 app.post('/api/agent/form/submit', requireAuth, async (req, res) => {
-  const { jobId, formId, values } = req.body || {};
+  const { jobId, formId, values, slot } = req.body || {};
   if (!jobId || !values) return res.status(400).json({ error: 'jobId and values required' });
   const stream = streams.get(jobId);
   const emit = stream ? (e, d) => sseSend(stream, e, d) : () => {};
@@ -704,8 +704,8 @@ app.post('/api/agent/form/submit', requireAuth, async (req, res) => {
     updateState(jobId, 'scheduling');
     const auth = useUser ? googleClientForUser(req.user?.userId) : googleClient();
     const calendar = google.calendar({ version: 'v3', auth });
-    const start = new Date();
-    const end = new Date(start.getTime() + 30 * 60 * 1000);
+    const start = slot?.start ? new Date(slot.start) : new Date();
+    const end = slot?.end ? new Date(slot.end) : new Date(start.getTime() + 30 * 60 * 1000);
     const attendees = (form.attendees || []).map((e) => ({ email: e }));
     const event = await calendar.events.insert({
       calendarId: process.env.GOOGLE_CALENDAR_ID || 'primary',
