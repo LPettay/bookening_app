@@ -134,6 +134,78 @@ function requireRole(role) {
   };
 }
 
+// Descope token fetching for Google Calendar access
+async function fetchGoogleTokensFromDescope(userId, userEmail) {
+  if (!DESCOPE_ENABLED || !descope) {
+    console.log('Descope not enabled, using fallback token mechanism');
+    return null;
+  }
+
+  try {
+    // Use Descope's outbound app functionality to fetch Google tokens
+    // This assumes you have configured a Google Calendar outbound app in Descope
+    const outboundApps = await descope.management.outboundApp.list();
+    
+    // Find the Google Calendar outbound app
+    const googleApp = outboundApps.outboundApps?.find(app => 
+      app.type === 'google' && app.name?.toLowerCase().includes('calendar')
+    );
+    
+    if (!googleApp) {
+      console.log('No Google Calendar outbound app found in Descope');
+      return null;
+    }
+
+    // Fetch tokens for the specific user
+    const tokens = await descope.management.outboundApp.getTokens(googleApp.id, userId);
+    
+    if (tokens && tokens.accessToken) {
+      console.log(`Successfully fetched Google tokens for user ${userEmail} via Descope`);
+      return {
+        access_token: tokens.accessToken,
+        refresh_token: tokens.refreshToken,
+        expiry_date: tokens.expiresAt ? new Date(tokens.expiresAt).getTime() : undefined,
+        token_type: 'Bearer'
+      };
+    }
+    
+    console.log(`No valid tokens found for user ${userEmail} in Descope`);
+    return null;
+  } catch (error) {
+    console.error('Error fetching Google tokens from Descope:', error.message);
+    return null;
+  }
+}
+
+// Enhanced Google client that can fetch tokens from Descope
+function googleClientWithDescope(userId = null, userEmail = null) {
+  const oAuth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+
+  // Try Descope first if user info is provided
+  if (userId && userEmail && DESCOPE_ENABLED) {
+    // This will be called asynchronously, so we'll handle it in the calling functions
+    return { oAuth2Client, userId, userEmail, useDescope: true };
+  }
+
+  // Fallback to existing token mechanisms
+  const envAccess = process.env.GOOGLE_ACCESS_TOKEN;
+  const envRefresh = process.env.GOOGLE_REFRESH_TOKEN;
+  if (envAccess || envRefresh) {
+    const expiry = process.env.GOOGLE_TOKEN_EXPIRY ? Number(process.env.GOOGLE_TOKEN_EXPIRY) : undefined;
+    oAuth2Client.setCredentials({ access_token: envAccess, refresh_token: envRefresh, expiry_date: expiry });
+    return { oAuth2Client, useDescope: false };
+  }
+
+  // Fallback to locally stored tokens
+  const tokens = readJSON(TOKENS_PATH, null);
+  if (tokens) oAuth2Client.setCredentials(tokens);
+  return { oAuth2Client, useDescope: false };
+}
+
 // sse hub
 const streams = new Map(); // jobId -> res
 function startSSE(res) {
@@ -205,12 +277,39 @@ function googleClientForUser(userId) {
 }
 
 // internal helper: suggest slots (owner-only or mutual if user connected)
-async function suggestSlotsCore(userId, { days = 7, durationMins = 30, windowStart = '09:00', windowEnd = '17:00', ownerOnly = true } = {}) {
+async function suggestSlotsCore(userId, { days = 7, durationMins = 30, windowStart = '09:00', windowEnd = '17:00', ownerOnly = true, userEmail = null } = {}) {
   if (!ensureOwnerGoogle({ status: () => ({ json: () => {} }) })) return { suggestions: [] }; // no-op when not connected
-  const ownerAuth = googleClient();
-  const userHasTokens = hasUserGoogle(userId);
-  const useOwnerOnly = ownerOnly || !userHasTokens;
-  const userAuth = !useOwnerOnly ? googleClientForUser(userId) : null;
+  
+  let ownerAuth = googleClient();
+  let userAuth = null;
+  let useOwnerOnly = ownerOnly;
+  
+  // Try to get user tokens from Descope first
+  if (!ownerOnly && userId && userEmail && DESCOPE_ENABLED) {
+    try {
+      const descopeTokens = await fetchGoogleTokensFromDescope(userId, userEmail);
+      if (descopeTokens) {
+        const oAuth2Client = new google.auth.OAuth2(
+          process.env.GOOGLE_CLIENT_ID,
+          process.env.GOOGLE_CLIENT_SECRET,
+          process.env.GOOGLE_REDIRECT_URI
+        );
+        oAuth2Client.setCredentials(descopeTokens);
+        userAuth = oAuth2Client;
+        useOwnerOnly = false;
+        console.log(`Using Descope tokens for user ${userEmail} calendar access`);
+      }
+    } catch (error) {
+      console.log(`Failed to fetch Descope tokens for user ${userEmail}, falling back to local tokens:`, error.message);
+    }
+  }
+  
+  // Fallback to existing token mechanisms
+  if (!userAuth) {
+    const userHasTokens = hasUserGoogle(userId);
+    useOwnerOnly = ownerOnly || !userHasTokens;
+    userAuth = !useOwnerOnly ? googleClientForUser(userId) : null;
+  }
 
   const calendarOwner = google.calendar({ version: 'v3', auth: ownerAuth });
   const calendarUser = !useOwnerOnly && userAuth ? google.calendar({ version: 'v3', auth: userAuth }) : null;
@@ -252,6 +351,60 @@ async function suggestSlotsCore(userId, { days = 7, durationMins = 30, windowSta
   return { suggestions, ownerOnly: useOwnerOnly };
 }
 
+// Enhanced scheduling function that can use Descope tokens
+async function scheduleEventWithDescope(userId, userEmail, form, slot, briefing) {
+  let auth = null;
+  let useDescope = false;
+  
+  // Try Descope first if user info is provided
+  if (userId && userEmail && DESCOPE_ENABLED) {
+    try {
+      const descopeTokens = await fetchGoogleTokensFromDescope(userId, userEmail);
+      if (descopeTokens) {
+        const oAuth2Client = new google.auth.OAuth2(
+          process.env.GOOGLE_CLIENT_ID,
+          process.env.GOOGLE_CLIENT_SECRET,
+          process.env.GOOGLE_REDIRECT_URI
+        );
+        oAuth2Client.setCredentials(descopeTokens);
+        auth = oAuth2Client;
+        useDescope = true;
+        console.log(`Using Descope tokens for user ${userEmail} calendar scheduling`);
+      }
+    } catch (error) {
+      console.log(`Failed to fetch Descope tokens for user ${userEmail}, falling back to local tokens:`, error.message);
+    }
+  }
+  
+  // Fallback to existing token mechanisms
+  if (!auth) {
+    const useUser = hasUserGoogle(userId);
+    if (!useUser && !ensureOwnerGoogle({ status: () => ({ json: () => {} }) })) {
+      throw new Error('No Google authentication available');
+    }
+    auth = useUser ? googleClientForUser(userId) : googleClient();
+  }
+
+  const calendar = google.calendar({ version: 'v3', auth });
+  const start = slot?.start ? new Date(slot.start) : new Date();
+  const end = slot?.end ? new Date(slot.end) : new Date(start.getTime() + 30 * 60 * 1000);
+  const attendees = (form.attendees || []).map((e) => ({ email: e }));
+  
+  const event = await calendar.events.insert({
+    calendarId: process.env.GOOGLE_CALENDAR_ID || 'primary',
+    sendUpdates: 'all',
+    requestBody: {
+      summary: form.topic || 'Meeting',
+      description: briefing,
+      start: { dateTime: start.toISOString() },
+      end: { dateTime: end.toISOString() },
+      attendees
+    }
+  });
+  
+  return { event: event.data, useDescope };
+}
+
 // agent logic
 const openaiApiKey = process.env.OPENAI_API_KEY;
 const openai = openaiApiKey ? new OpenAI({ apiKey: openaiApiKey }) : null;
@@ -289,15 +442,44 @@ async function agentDecideAndGather({ initialMessage, userContext }, emit) {
 
   const sys = `You are a pragmatic meeting triage agent.
 Policy=${cfg.decisionPolicy}. Focus on the user's diligence (clear agenda, desired outcome, prior effort) and the expected value of a meeting.
+
+IMPORTANT: Pay attention to the user's CURRENT intent, not just the conversation history. If a user initially asks an informational question but then expresses a desire for a meeting, evaluate the meeting request on its own merits.
+
+Do NOT approve meetings for:
+- Simple informational questions that can be answered directly (unless the user then requests a meeting)
+- Basic how-to questions or documentation requests (unless the user then requests a meeting)
+- Questions about product features that are purely informational (unless the user then requests a meeting)
+
+APPROVE meetings when the user:
+- Explicitly requests a meeting AND provides clear justification for why a meeting is needed
+- Needs collaborative discussion or brainstorming that can't be done asynchronously
+- Requires decision-making with multiple stakeholders
+- Has complex problem-solving that benefits from real-time interaction
+- Wants project planning or strategy sessions
+- Needs technical deep-dives that require back-and-forth discussion
+- Has follow-up questions that require interactive discussion
+
+When a user requests a meeting but lacks clear justification, probe for:
+- What specific aspect they want to discuss that wasn't already covered
+- What additional value a meeting would provide over the information already given
+- What specific outcome they're hoping to achieve
+- Who needs to be involved and why
+- What background context is relevant
+- What they've already tried or researched
+
+If the user's question was already fully answered and they just say "Can we have a meeting?" without additional context, ask clarifying questions about what specific value the meeting would provide.
+
 Do not request dates/times at this stage; scheduling happens later after approval.
-Be moderately lenient: if the user shows reasonable diligence and a clear goal, APPROVE; otherwise briefly DECLINE with rationale and ask for only the truly missing diligence details.
 When APPROVED, you will later gather: topic, attendees (emails), desiredTimeframe, background, links.
 In your JSON, the "missing" array should contain diligence-only items (choose from: agenda, outcome, priorResearch, context, links, attendees). Never include date/time.`;
 
   const prompt = `
 Checklist: ${cfg.dueDiligenceChecklist.join(' | ')}
-User: ${initialMessage}
+User's latest message: ${initialMessage}
 Known context: ${JSON.stringify(userContext || {})}
+
+IMPORTANT: Focus on the user's CURRENT intent. If they initially asked an informational question but then expressed a desire for a meeting, evaluate the meeting request on its own merits. Look for explicit meeting requests like "I would like a meeting", "Can we discuss", "I need to schedule", etc.
+
 Decide: APPROVE or DECLINE with brief rationale. Then list missing diligence fields if any (no dates or times).
 Respond in JSON with: { "decision": "APPROVE|DECLINE", "rationale": string, "missing": string[] }
 `;
@@ -346,15 +528,31 @@ async function chatAgentGenerate({ ask, userMessages, decision, transcript }) {
 
   if (!openai) return fallback();
 
-  const system = `You are a warm, concise mentor (like a helpful professor).
+  const system = `You are a warm, helpful assistant who can answer questions directly and help with meeting requests.
 Maintain memory using the provided transcript.
+If the user is asking informational questions (like "what is X" or "how does Y work"), provide helpful answers directly.
+If the user then expresses a desire for a meeting or discussion, help them clarify what additional value the meeting would provide.
+When a user requests a meeting but lacks clear justification, ask clarifying questions to understand:
+- What specific aspect they want to discuss that wasn't already covered
+- What additional value a meeting would provide over the information already given
+- What specific outcome they're hoping to achieve
+- Who needs to be involved in the discussion and why
+- What background context is relevant
+- What they've already tried or researched
+
+If you've already provided a complete answer to their question and they just ask "Can we have a meeting?" without additional context, ask what specific value the meeting would provide or what additional questions they have.
 Do not ask for dates or times; scheduling happens later after approval.
-Always acknowledge what was already given; ask at most one clarifying diligence question if truly needed.
-Speak naturally in 1-3 short sentences. Avoid mentioning internal decision processes.`;
+Always acknowledge what was already given; ask at most one clarifying question if truly needed.
+Speak naturally in 1-3 short sentences. Avoid mentioning internal decision processes.
+
+Basic Descope knowledge:
+- Magic Link: A passwordless authentication method where users receive a link via email/SMS that logs them in when clicked. No password required.
+- Enchanted Link: A more advanced version of magic link that includes additional features like custom branding, expiration times, and enhanced security measures.
+- Both are used for passwordless authentication, but enchanted links offer more customization and security options.`;
 
   const userSummary = `Conversation transcript (most recent first):\n${(transcript || []).join('\n')}`;
   const need = (ask && ask.length) ? ask.join(', ') : '';
-  const hint = decision?.decision ? `Current internal stance: ${decision.decision}. Do NOT reveal this; simply guide the user.` : '';
+  const hint = decision?.decision ? `Current internal stance: ${decision.decision}. If DECLINED, provide helpful information instead of suggesting a meeting.` : '';
 
   const resp = await openai.chat.completions.create({
     model,
@@ -461,57 +659,17 @@ app.get('/api/calendar/suggest', requireAuth, async (req, res) => {
   const windowEnd = String(req.query.windowEnd || '17:00');
   const ownerOnly = String(req.query.ownerOnly || 'false') === 'true';
 
-  // Build clients
-  if (!ensureOwnerGoogle(res)) return; // owner must be connected
-  const ownerAuth = googleClient();
-  const userHasTokens = hasUserGoogle(req.user?.userId);
-  const useOwnerOnly = ownerOnly || !userHasTokens;
-  const userAuth = !useOwnerOnly ? googleClientForUser(req.user?.userId) : null;
+  // Use the enhanced suggestSlotsCore function that supports Descope tokens
+  const result = await suggestSlotsCore(req.user?.userId, {
+    days,
+    durationMins,
+    windowStart,
+    windowEnd,
+    ownerOnly,
+    userEmail: req.user?.email
+  });
 
-  const calendarOwner = google.calendar({ version: 'v3', auth: ownerAuth });
-  const calendarUser = !useOwnerOnly && userAuth ? google.calendar({ version: 'v3', auth: userAuth }) : null;
-
-  const now = new Date();
-  const until = new Date(Date.now() + days * 24 * 3600 * 1000);
-
-  const listEvents = async (calendar, calendarId) => {
-    const r = await calendar.events.list({
-      calendarId,
-      timeMin: now.toISOString(),
-      timeMax: until.toISOString(),
-      singleEvents: true,
-      orderBy: 'startTime'
-    });
-    return (r.data.items || []).map(e => ({
-      start: new Date(e.start?.dateTime || e.start?.date),
-      end: new Date(e.end?.dateTime || e.end?.date)
-    }));
-  };
-
-  const ownerEvents = await listEvents(calendarOwner, process.env.GOOGLE_CALENDAR_ID || 'primary');
-  const userEvents = calendarUser ? await listEvents(calendarUser, 'primary') : [];
-
-  const parseHM = (s) => { const [h, m] = s.split(':').map(Number); return { h: h || 0, m: m || 0 }; };
-  const { h: wsH, m: wsM } = parseHM(windowStart);
-  const { h: weH, m: weM } = parseHM(windowEnd);
-
-  const slotMs = durationMins * 60 * 1000;
-  const suggestions = [];
-  for (let d = 0; d < days; d++) {
-    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d);
-    const dayStart = new Date(day); dayStart.setHours(wsH, wsM, 0, 0);
-    const dayEnd = new Date(day); dayEnd.setHours(weH, weM, 0, 0);
-    for (let t = dayStart.getTime(); t + slotMs <= dayEnd.getTime(); t += slotMs) {
-      const s = new Date(t); const e = new Date(t + slotMs);
-      const busyOwner = ownerEvents.some(ev => !(e <= ev.start || s >= ev.end));
-      const busyUser = useOwnerOnly ? false : userEvents.some(ev => !(e <= ev.start || s >= ev.end));
-      if (!busyOwner && !busyUser && s > now) suggestions.push({ start: s.toISOString(), end: e.toISOString() });
-      if (suggestions.length >= 10) break;
-    }
-    if (suggestions.length >= 10) break;
-  }
-
-  res.json({ suggestions, ownerOnly: useOwnerOnly });
+  res.json(result);
 });
 
 // per-user google oauth (local demo storage)
@@ -531,6 +689,44 @@ app.get('/api/user/calendar/oauth/callback', requireAuth, async (req, res) => {
   const { tokens } = await o.getToken(code);
   writeJSON(userTokensPath(req.user?.userId), tokens);
   res.send('Your Google account is connected. You can close this tab.');
+});
+
+// Descope token fetching endpoint for calendar access
+app.post('/api/calendar/descope-tokens', requireAuth, async (req, res) => {
+  try {
+    const { userId, userEmail } = req.body;
+    const targetUserId = userId || req.user?.userId;
+    const targetUserEmail = userEmail || req.user?.email;
+    
+    if (!targetUserId || !targetUserEmail) {
+      return res.status(400).json({ error: 'User ID and email are required' });
+    }
+
+    const tokens = await fetchGoogleTokensFromDescope(targetUserId, targetUserEmail);
+    
+    if (tokens) {
+      res.json({ 
+        success: true, 
+        tokens: {
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+          expiry_date: tokens.expiry_date,
+          token_type: tokens.token_type
+        }
+      });
+    } else {
+      res.status(404).json({ 
+        success: false, 
+        error: 'No valid Google tokens found in Descope for this user' 
+      });
+    }
+  } catch (error) {
+    console.error('Error fetching Descope tokens:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch tokens from Descope' 
+    });
+  }
 });
 
 // agent start + sse
@@ -595,7 +791,10 @@ app.post('/api/agent/message', requireAuth, async (req, res) => {
     // calendar tool suggestion (demonstration): only when approved
     if (decision.decision === 'APPROVE') {
       emit('tool', { name: 'calendar.suggest', status: 'call', args: { ownerOnly: true }, ...toolContext });
-      const slots = await suggestSlotsCore(req.user?.userId, { ownerOnly: true });
+      const slots = await suggestSlotsCore(req.user?.userId, { 
+        ownerOnly: true, 
+        userEmail: req.user?.email 
+      });
       emit('tool', { name: 'calendar.suggest', status: 'result', result: { count: (slots.suggestions || []).length }, ...toolContext });
       emit('agent', { role: 'assistant', agent: 'calendar', suggestions: slots.suggestions });
     }
@@ -604,16 +803,18 @@ app.post('/api/agent/message', requireAuth, async (req, res) => {
 
     const ask = (decision.missing && decision.missing.length > 0)
       ? decision.missing
-      : (decision.decision === 'APPROVE' ? (loadConfig().requiredFieldsOnApprove || []) : ['topic', 'desiredTimeframe', 'agenda']);
+      : (decision.decision === 'APPROVE' ? (loadConfig().requiredFieldsOnApprove || []) : []);
     const transcriptLines = (next.messages || []).map(m => `${m.role}: ${m.content}`).slice(-12); // last 12 exchanges
-    emit('gather', { ask });
+    
     // If approved and details are needed, show inline form and skip extra assistant follow-up
     if (decision.decision === 'APPROVE' && ask.length > 0) {
+      emit('gather', { ask });
       const formSchema = buildFormSchema(ask);
       const prefill = await summarizeForForm(transcriptLines);
       const streamForm = streams.get(jobId);
       if (streamForm) sseSend(streamForm, 'form', { schema: formSchema, prefill });
     } else {
+      // For declined meetings or approved meetings with no missing details, provide helpful response
       const userMsgs = (next.messages || []).filter(m => m.role === 'user').map(m => m.content);
       const chatText = await chatAgentGenerate({ ask, userMessages: userMsgs, decision, transcript: transcriptLines });
       appendMessage(jobId, { role: 'assistant', agent: 'chat', content: chatText });
@@ -651,35 +852,25 @@ app.post('/api/agent/complete', requireAuth, async (req, res) => {
   appendMessage(jobId, { role: 'assistant', agent: 'chat', content: 'I prepared a briefing draft based on your details. Scheduling now...' });
   if (stream2) sseSend(stream2, 'chat', { role: 'assistant', agent: 'chat', content: 'I prepared a briefing draft based on your details. Scheduling now...' });
 
-  // prefer requester tokens; fallback to owner
-  const useUser = hasUserGoogle(req.user?.userId);
-  if (!useUser && !ensureOwnerGoogle(res)) { emit('error', { error: 'Owner Google not connected' }); return; }
   try {
     updateState(jobId, 'scheduling');
-    const auth = useUser ? googleClientForUser(req.user?.userId) : googleClient();
-    const calendar = google.calendar({ version: 'v3', auth });
-    const start = slot?.start ? new Date(slot.start) : new Date();
-    const end = slot?.end ? new Date(slot.end) : new Date(start.getTime() + 30 * 60 * 1000);
-    const attendees = (form.attendees || []).map((e) => ({ email: e }));
-    emit('tool', { name: 'calendar.schedule', status: 'call', args: { start: start.toISOString(), end: end.toISOString(), attendees: attendees.map(a => a.email) }, actor: { email: req.user?.email, userId: req.user?.userId } });
-    const event = await calendar.events.insert({
-      calendarId: process.env.GOOGLE_CALENDAR_ID || 'primary',
-      sendUpdates: 'all',
-      requestBody: {
-        summary: form.topic || 'Meeting',
-        description: briefing,
-        start: { dateTime: start.toISOString() },
-        end: { dateTime: end.toISOString() },
-        attendees
-      }
-    });
-    emit('tool', { name: 'calendar.schedule', status: 'result', result: { id: event.data.id, link: event.data.htmlLink } });
-    emit('scheduled', { eventId: event.data.id, htmlLink: event.data.htmlLink });
+    emit('tool', { name: 'calendar.schedule', status: 'call', args: { start: slot?.start || new Date().toISOString(), end: slot?.end || new Date(Date.now() + 30 * 60 * 1000).toISOString(), attendees: (form.attendees || []).map(a => a) }, actor: { email: req.user?.email, userId: req.user?.userId } });
+    
+    const { event, useDescope } = await scheduleEventWithDescope(
+      req.user?.userId, 
+      req.user?.email, 
+      form, 
+      slot, 
+      briefing
+    );
+    
+    emit('tool', { name: 'calendar.schedule', status: 'result', result: { id: event.id, link: event.htmlLink, useDescope } });
+    emit('scheduled', { eventId: event.id, htmlLink: event.htmlLink });
     updateState(jobId, 'notified');
     emit('done', { status: 'SCHEDULED' });
     appendMessage(jobId, { role: 'assistant', agent: 'chat', content: 'Invite sent. You should receive a calendar email shortly.' });
     if (streams.get(jobId)) sseSend(streams.get(jobId), 'chat', { role: 'assistant', agent: 'chat', content: 'Invite sent. You should receive a calendar email shortly.' });
-    res.json({ ok: true, event: event.data });
+    res.json({ ok: true, event });
     closeStream(jobId);
   } catch (e) {
     emit('error', { error: e.message || 'Calendar error' });
@@ -719,33 +910,23 @@ app.post('/api/agent/form/submit', requireAuth, async (req, res) => {
   appendMessage(jobId, { role: 'assistant', agent: 'chat', content: 'Thanks! I have what I need. Scheduling now...' });
   emit('chat', { role: 'assistant', agent: 'chat', content: 'Thanks! I have what I need. Scheduling now...' });
 
-  // prefer requester tokens; fallback to owner
-  const useUser = hasUserGoogle(req.user?.userId);
-  if (!useUser && !ensureOwnerGoogle(res)) { emit('error', { error: 'Owner Google not connected' }); updateState(jobId, 'error'); return; }
   try {
     updateState(jobId, 'scheduling');
-    const auth = useUser ? googleClientForUser(req.user?.userId) : googleClient();
-    const calendar = google.calendar({ version: 'v3', auth });
-    const start = slot?.start ? new Date(slot.start) : new Date();
-    const end = slot?.end ? new Date(slot.end) : new Date(start.getTime() + 30 * 60 * 1000);
-    const attendees = (form.attendees || []).map((e) => ({ email: e }));
-    const event = await calendar.events.insert({
-      calendarId: process.env.GOOGLE_CALENDAR_ID || 'primary',
-      sendUpdates: 'all',
-      requestBody: {
-        summary: form.topic || 'Meeting',
-        description: briefing,
-        start: { dateTime: start.toISOString() },
-        end: { dateTime: end.toISOString() },
-        attendees
-      }
-    });
-    emit('scheduled', { eventId: event.data.id, htmlLink: event.data.htmlLink });
+    
+    const { event, useDescope } = await scheduleEventWithDescope(
+      req.user?.userId, 
+      req.user?.email, 
+      form, 
+      slot, 
+      briefing
+    );
+    
+    emit('scheduled', { eventId: event.id, htmlLink: event.htmlLink });
     updateState(jobId, 'notified');
     emit('done', { status: 'SCHEDULED' });
     appendMessage(jobId, { role: 'assistant', agent: 'chat', content: 'Invite sent. You should receive a calendar email shortly.' });
     if (streams.get(jobId)) sseSend(streams.get(jobId), 'chat', { role: 'assistant', agent: 'chat', content: 'Invite sent. You should receive a calendar email shortly.' });
-    return res.json({ ok: true, event: event.data });
+    return res.json({ ok: true, event });
   } catch (e) {
     emit('error', { error: e.message || 'Calendar error' });
     updateState(jobId, 'error');

@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    allowedHosts: ['bookening.lancepettay.me'],
     proxy: {
       '/api': 'http://localhost:4000'
     }
